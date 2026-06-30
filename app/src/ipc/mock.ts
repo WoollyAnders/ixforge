@@ -152,12 +152,48 @@ const CAPABILITIES: Capability[] = [
   },
 ];
 
-export async function listDevices(): Promise<DeviceSummary[]> {
-  return [DEVICE];
+// A second mock device with a ZONED (non-per-key) layout — demonstrates zone
+// control and proves the capability-driven UI handles boards that aren't per-key.
+function buildStrip(): LedLayout {
+  const keys: KeyDef[] = [];
+  for (let i = 0; i < 12; i++) {
+    keys.push({ id: `L${i}`, label: "", x: i, y: 0, w: 1, h: 1, led_index: i });
+  }
+  return { keys, matrix_size: [1, 12] };
 }
 
-export async function getCapabilities(_deviceId: string): Promise<Capability[]> {
-  return CAPABILITIES;
+const ZONED_DEVICE: DeviceSummary = {
+  id: "mock:zoned-strip",
+  name: "RGB Strip (mock · zoned)",
+  connected: true,
+  capability_kinds: ["rgb"],
+};
+
+const ZONED_CAPS: Capability[] = [
+  {
+    kind: "rgb",
+    mode: {
+      zoned: {
+        zones: [
+          { id: "left", label: "Left", keys: ["L0", "L1", "L2", "L3"] },
+          { id: "center", label: "Center", keys: ["L4", "L5", "L6", "L7"] },
+          { id: "right", label: "Right", keys: ["L8", "L9", "L10", "L11"] },
+        ],
+      },
+    },
+    layout: buildStrip(),
+    effects: [],
+    max_brightness: 255,
+    color_order: "RGB",
+  },
+];
+
+export async function listDevices(): Promise<DeviceSummary[]> {
+  return [DEVICE, ZONED_DEVICE];
+}
+
+export async function getCapabilities(deviceId: string): Promise<Capability[]> {
+  return deviceId === ZONED_DEVICE.id ? ZONED_CAPS : CAPABILITIES;
 }
 
 export async function setRgb(deviceId: string, cmd: RgbCommand): Promise<void> {

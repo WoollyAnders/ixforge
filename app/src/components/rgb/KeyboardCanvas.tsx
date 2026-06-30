@@ -17,6 +17,7 @@ export function KeyboardCanvas({
   const keyColors = useStore((s) => s.keyColors);
   const paintKey = useStore((s) => s.paintKey);
   const activeColor = useStore((s) => s.activeColor);
+  const customBrightness = useStore((s) => s.customBrightness);
 
   return (
     <KeyboardView
@@ -27,6 +28,7 @@ export function KeyboardCanvas({
       accent={activeColor}
       screenText="CUSTOM"
       screenAspect={screenAspect}
+      brightness={customBrightness / 100}
     />
   );
 }

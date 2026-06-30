@@ -21,6 +21,8 @@ interface ForgeState {
   // RGB editor working state
   activeColor: string;
   keyColors: Record<string, string>; // keyId -> hex
+  customBrightness: number; // 0..100, global dim applied to custom colors
+  zoneColors: Record<string, string>; // zoneId -> hex (zoned devices)
 
   // Effects working state
   selectedEffectId: string | null;
@@ -32,10 +34,12 @@ interface ForgeState {
   rgbCapability: () => RgbCapability | undefined;
 
   setActiveColor: (hex: string) => void;
+  setCustomBrightness: (pct: number) => void;
   paintKey: (keyId: string) => void;
   fillAll: () => Promise<void>;
   clearAll: () => Promise<void>;
   applyToKeyboard: () => Promise<void>;
+  setZoneColor: (zoneId: string) => Promise<void>;
 
   selectEffect: (id: string) => void;
   setEffectSpeed: (n: number) => void;
@@ -52,6 +56,17 @@ interface ForgeState {
   // Hotplug
   deviceAttached: (device: DeviceSummary) => void;
   deviceDetached: (id: string) => void;
+}
+
+/** Scale a hex color toward black by a 0..100 percentage. */
+function scaleHex(hex: string, pct: number): string {
+  const c = hexToColor(hex);
+  const f = Math.max(0, Math.min(100, pct)) / 100;
+  return colorToHex({
+    r: Math.round(c.r * f),
+    g: Math.round(c.g * f),
+    b: Math.round(c.b * f),
+  });
 }
 
 export const useStore = create<ForgeState>((set, get) => {
@@ -73,6 +88,8 @@ export const useStore = create<ForgeState>((set, get) => {
 
     activeColor: "#22d3ee",
     keyColors: {},
+    customBrightness: 100,
+    zoneColors: {},
 
     selectedEffectId: null,
     effectSpeed: 3,
@@ -96,7 +113,7 @@ export const useStore = create<ForgeState>((set, get) => {
     },
 
     async selectDevice(id) {
-      set({ selectedId: id, keyColors: {} });
+      set({ selectedId: id, keyColors: {}, zoneColors: {} });
       try {
         const capabilities = await ipc.getCapabilities(id);
         const rgb = capabilities.find((c): c is RgbCapability => c.kind === "rgb");
@@ -119,6 +136,10 @@ export const useStore = create<ForgeState>((set, get) => {
       set({ activeColor: hex });
     },
 
+    setCustomBrightness(pct) {
+      set({ customBrightness: pct });
+    },
+
     paintKey(keyId) {
       set((s) => {
         const next = { ...s.keyColors };
@@ -132,13 +153,14 @@ export const useStore = create<ForgeState>((set, get) => {
     },
 
     async fillAll() {
-      const { selectedId, activeColor } = get();
+      const { selectedId, activeColor, customBrightness } = get();
       const rgb = get().rgbCapability();
       if (!selectedId || !rgb) return;
       const keyColors: Record<string, string> = {};
       for (const k of rgb.layout.keys) keyColors[k.id] = activeColor;
       set({ keyColors });
-      await send(selectedId, { set_all: hexToColor(activeColor) }, "Filled all keys");
+      const color = hexToColor(scaleHex(activeColor, customBrightness));
+      await send(selectedId, { set_all: color }, "Filled all keys");
     },
 
     async clearAll() {
@@ -149,12 +171,32 @@ export const useStore = create<ForgeState>((set, get) => {
     },
 
     async applyToKeyboard() {
-      const { selectedId, keyColors } = get();
+      const { selectedId, keyColors, customBrightness } = get();
       if (!selectedId) return;
       const set_keys = Object.entries(keyColors).map(
-        ([k, hex]) => [k, hexToColor(hex)] as [string, ReturnType<typeof hexToColor>],
+        ([k, hex]) =>
+          [k, hexToColor(scaleHex(hex, customBrightness))] as [
+            string,
+            ReturnType<typeof hexToColor>,
+          ],
       );
       await send(selectedId, { set_keys }, `Applied ${set_keys.length} key(s)`);
+    },
+
+    async setZoneColor(zoneId) {
+      const { selectedId, activeColor, customBrightness } = get();
+      const rgb = get().rgbCapability();
+      if (!selectedId || !rgb || typeof rgb.mode !== "object") return;
+      const zone = rgb.mode.zoned.zones.find((z) => z.id === zoneId);
+      if (!zone) return;
+      // Light the zone's keys in the rendition + remember the zone's color.
+      set((s) => {
+        const keyColors = { ...s.keyColors };
+        for (const k of zone.keys) keyColors[k] = activeColor;
+        return { keyColors, zoneColors: { ...s.zoneColors, [zoneId]: activeColor } };
+      });
+      const color = hexToColor(scaleHex(activeColor, customBrightness));
+      await send(selectedId, { set_zone: { zone: zoneId, color } }, `Set zone "${zoneId}"`);
     },
 
     selectEffect(id) {

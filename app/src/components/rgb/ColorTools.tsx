@@ -1,5 +1,5 @@
 import { HexColorPicker } from "react-colorful";
-import { Button, ColorSwatch, Group, Stack, Text } from "@mantine/core";
+import { Button, ColorSwatch, Group, Slider, Stack, Text } from "@mantine/core";
 import { useStore } from "../../store/useStore";
 
 const PRESETS = [
@@ -19,6 +19,8 @@ export function ColorTools() {
   const fillAll = useStore((s) => s.fillAll);
   const clearAll = useStore((s) => s.clearAll);
   const apply = useStore((s) => s.applyToKeyboard);
+  const brightness = useStore((s) => s.customBrightness);
+  const setBrightness = useStore((s) => s.setCustomBrightness);
 
   return (
     <Stack gap="sm" w={216} style={{ flexShrink: 0 }}>
@@ -36,6 +38,12 @@ export function ColorTools() {
           />
         ))}
       </Group>
+      <div>
+        <Text size="xs" c="dimmed">
+          Brightness
+        </Text>
+        <Slider min={0} max={100} step={5} value={brightness} onChange={setBrightness} />
+      </div>
       <Text size="xs" c="dimmed">
         Click keys to paint them with the active color, then apply to the device.
       </Text>

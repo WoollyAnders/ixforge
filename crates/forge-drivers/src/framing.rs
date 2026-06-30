@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 
 use forge_core::{
     Capability, Color, ColorOrder, DeviceProfile, DeviceSession, EffectSelection, ForgeError,
-    HidTransport, LedLayout, RgbCommand,
+    HidTransport, KeyId, LedLayout, RgbCommand, RgbMode, ZoneId,
 };
 
 /// Wire framing parameters for a paged full-frame LED write.
@@ -163,6 +163,23 @@ impl PlaceholderSession {
             .map(|p| p as u8)
             .ok_or_else(|| ForgeError::InvalidArgument(format!("unknown effect {effect_id:?}")))
     }
+
+    /// The keys belonging to a lighting zone (for `RgbMode::Zoned` boards).
+    fn zone_keys(&self, zone: &ZoneId) -> Result<Vec<KeyId>, ForgeError> {
+        let zones = self.capabilities.iter().find_map(|c| match c {
+            Capability::Rgb(rgb) => match &rgb.mode {
+                RgbMode::Zoned { zones } => Some(zones),
+                _ => None,
+            },
+            _ => None,
+        });
+        zones
+            .ok_or(ForgeError::NotSupported)?
+            .iter()
+            .find(|z| &z.id == zone)
+            .map(|z| z.keys.clone())
+            .ok_or_else(|| ForgeError::InvalidArgument(format!("unknown zone {zone:?}")))
+    }
 }
 
 impl DeviceSession for PlaceholderSession {
@@ -171,6 +188,20 @@ impl DeviceSession for PlaceholderSession {
     }
 
     fn apply_rgb(&mut self, cmd: &RgbCommand) -> Result<(), ForgeError> {
+        // Resolve a zone to its keys, then reuse the per-key path.
+        let resolved;
+        let cmd = match cmd {
+            RgbCommand::SetZone { zone, color } => {
+                let pairs = self
+                    .zone_keys(zone)?
+                    .into_iter()
+                    .map(|k| (k, *color))
+                    .collect();
+                resolved = RgbCommand::SetKeys(pairs);
+                &resolved
+            }
+            other => other,
+        };
         let buffer = buffer_from_rgb(&self.layout, cmd)?;
         let reports = encode_paged_frame(self.frame, &buffer)?;
         for report in &reports {
@@ -333,5 +364,65 @@ mod tests {
             .unwrap_err();
         // No RGB capability at all → NotSupported.
         assert!(matches!(err, ForgeError::NotSupported));
+    }
+
+    #[test]
+    fn set_zone_lights_only_that_zone() {
+        use forge_core::{KeyDef, KeyId, LedLayout, RgbCapability, RgbMode, ZoneDef, ZoneId};
+        use forge_transport::MockTransport;
+
+        let key = |id: &str, led: u16| KeyDef {
+            id: KeyId::from(id),
+            label: id.into(),
+            x: led as f32,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            led_index: Some(led),
+        };
+        let layout = LedLayout {
+            keys: vec![key("A", 0), key("B", 1), key("C", 2)],
+            matrix_size: (1, 3),
+        };
+        let rgb = RgbCapability {
+            mode: RgbMode::Zoned {
+                zones: vec![ZoneDef {
+                    id: ZoneId::from("left"),
+                    label: "Left".into(),
+                    keys: vec![KeyId::from("A"), KeyId::from("B")],
+                }],
+            },
+            layout: layout.clone(),
+            effects: vec![],
+            max_brightness: 255,
+            color_order: ColorOrder::Rgb,
+        };
+        let mock = MockTransport::new();
+        let mut session = PlaceholderSession {
+            capabilities: vec![Capability::Rgb(rgb)],
+            transport: Box::new(mock.clone()),
+            layout,
+            frame: params(64),
+        };
+
+        session
+            .apply_rgb(&RgbCommand::SetZone {
+                zone: ZoneId::from("left"),
+                color: Color::RED,
+            })
+            .unwrap();
+
+        let r = &mock.feature_writes()[0];
+        assert_eq!(&r[4..7], &[0xff, 0x00, 0x00], "A lit (zone)");
+        assert_eq!(&r[7..10], &[0xff, 0x00, 0x00], "B lit (zone)");
+        assert_eq!(&r[10..13], &[0x00, 0x00, 0x00], "C off (not in zone)");
+
+        // Unknown zone is rejected.
+        assert!(session
+            .apply_rgb(&RgbCommand::SetZone {
+                zone: ZoneId::from("nope"),
+                color: Color::RED,
+            })
+            .is_err());
     }
 }

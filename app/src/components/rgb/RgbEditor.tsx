@@ -2,15 +2,20 @@ import { Divider, Group, Stack, Tabs, Text } from "@mantine/core";
 import { useStore } from "../../store/useStore";
 import { chassisFor } from "../../rgb/deviceArt";
 import { KeyboardCanvas } from "./KeyboardCanvas";
+import { KeyboardView } from "./KeyboardView";
 import { ColorTools } from "./ColorTools";
 import { EffectPanel } from "./EffectPanel";
 import { PresetBar } from "./PresetBar";
+import { ZoneEditor } from "./ZoneEditor";
 
 export function RgbEditor() {
   const rgb = useStore((s) => s.rgbCapability());
   const capabilities = useStore((s) => s.capabilities);
   const devices = useStore((s) => s.devices);
   const selectedId = useStore((s) => s.selectedId);
+  const keyColors = useStore((s) => s.keyColors);
+  const activeColor = useStore((s) => s.activeColor);
+  const customBrightness = useStore((s) => s.customBrightness);
 
   if (!rgb) {
     return <Text c="dimmed">No RGB capability.</Text>;
@@ -19,6 +24,8 @@ export function RgbEditor() {
   const deviceName = devices.find((d) => d.id === selectedId)?.name ?? "";
   const chassis = chassisFor(deviceName, rgb.layout);
   const hasEffects = rgb.effects.length > 0;
+  const isZoned = typeof rgb.mode === "object"; // RgbMode::Zoned
+  const customValue = isZoned ? "zones" : "custom";
 
   // Screen aspect comes from the device's LCD capability, so the rendition's
   // screen matches the real panel (the F108 Pro's 1.14" panel is 240×135).
@@ -27,10 +34,10 @@ export function RgbEditor() {
     lcd && lcd.kind === "lcd" && lcd.height > 0 ? lcd.width / lcd.height : 16 / 9;
 
   return (
-    <Tabs defaultValue={hasEffects ? "effects" : "custom"} keepMounted={false}>
+    <Tabs defaultValue={hasEffects ? "effects" : customValue} keepMounted={false}>
       <Tabs.List mb="md">
         {hasEffects && <Tabs.Tab value="effects">Effects</Tabs.Tab>}
-        <Tabs.Tab value="custom">Custom (per-key)</Tabs.Tab>
+        <Tabs.Tab value={customValue}>{isZoned ? "Zones" : "Custom (per-key)"}</Tabs.Tab>
       </Tabs.List>
 
       {hasEffects && (
@@ -39,17 +46,33 @@ export function RgbEditor() {
         </Tabs.Panel>
       )}
 
-      <Tabs.Panel value="custom">
-        <Stack gap="md">
+      <Tabs.Panel value={customValue}>
+        {isZoned ? (
           <Group align="flex-start" gap="lg" wrap="nowrap">
             <div style={{ flex: 1, minWidth: 0 }}>
-              <KeyboardCanvas layout={rgb.layout} chassis={chassis} screenAspect={screenAspect} />
+              <KeyboardView
+                layout={rgb.layout}
+                chassis={chassis}
+                colors={keyColors}
+                accent={activeColor}
+                screenAspect={screenAspect}
+                brightness={customBrightness / 100}
+              />
             </div>
-            <ColorTools />
+            <ZoneEditor />
           </Group>
-          <Divider />
-          <PresetBar />
-        </Stack>
+        ) : (
+          <Stack gap="md">
+            <Group align="flex-start" gap="lg" wrap="nowrap">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <KeyboardCanvas layout={rgb.layout} chassis={chassis} screenAspect={screenAspect} />
+              </div>
+              <ColorTools />
+            </Group>
+            <Divider />
+            <PresetBar />
+          </Stack>
+        )}
       </Tabs.Panel>
     </Tabs>
   );

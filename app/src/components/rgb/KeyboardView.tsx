@@ -19,6 +19,8 @@ export interface KeyboardViewProps {
   screenText?: string;
   /** LCD width:height ratio (from the device's display) — sizes the screen rect. */
   screenAspect?: number;
+  /** Global brightness multiplier (0..1) applied to displayed key colors. */
+  brightness?: number;
 }
 
 // Procedurally drawn keyboard rendition — no image assets. Keys/case/knob/screen
@@ -32,6 +34,7 @@ export function KeyboardView({
   accent = "#22d3ee",
   screenText = "IX FORGE",
   screenAspect = 16 / 9,
+  brightness = 1,
 }: KeyboardViewProps) {
   const uid = useId().replace(/:/g, "");
   const U = (v: number) => v * UNIT;
@@ -121,14 +124,14 @@ export function KeyboardView({
               width={U(k.w) - GAP}
               height={U(k.h) - GAP}
               rx={6}
-              fill={colors[k.id]}
+              fill={dimHex(colors[k.id], brightness)}
             />
           ))}
         </g>
 
         {/* Keycaps */}
         {layout.keys.map((k) => {
-          const fill = colors[k.id] ?? OFF;
+          const fill = colors[k.id] ? dimHex(colors[k.id], brightness) : OFF;
           const x = U(k.x) + GAP / 2;
           const y = U(k.y) + GAP / 2;
           const w = U(k.w) - GAP;
@@ -240,4 +243,14 @@ function isDark(hex: string): boolean {
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 < 140;
+}
+
+function dimHex(hex: string, f: number): string {
+  if (f >= 1) return hex;
+  const h = hex.replace("#", "");
+  const ch = (i: number) =>
+    Math.round(parseInt(h.slice(i, i + 2), 16) * Math.max(0, f))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${ch(0)}${ch(2)}${ch(4)}`;
 }
