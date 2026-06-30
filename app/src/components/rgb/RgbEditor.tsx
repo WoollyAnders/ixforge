@@ -26,11 +26,17 @@ export function RgbEditor() {
     lcd && lcd.kind === "lcd" && lcd.height > 0 ? lcd.width / lcd.height : 16 / 9;
 
   return (
-    <Tabs defaultValue="custom" keepMounted={false}>
+    <Tabs defaultValue={hasEffects ? "effects" : "custom"} keepMounted={false}>
       <Tabs.List mb="md">
-        <Tabs.Tab value="custom">Custom (per-key)</Tabs.Tab>
         {hasEffects && <Tabs.Tab value="effects">Effects</Tabs.Tab>}
+        <Tabs.Tab value="custom">Custom (per-key)</Tabs.Tab>
       </Tabs.List>
+
+      {hasEffects && (
+        <Tabs.Panel value="effects">
+          <EffectPanel layout={rgb.layout} chassis={chassis} screenAspect={screenAspect} />
+        </Tabs.Panel>
+      )}
 
       <Tabs.Panel value="custom">
         <Group align="flex-start" gap="lg" wrap="nowrap">
@@ -40,12 +46,6 @@ export function RgbEditor() {
           <ColorTools />
         </Group>
       </Tabs.Panel>
-
-      {hasEffects && (
-        <Tabs.Panel value="effects">
-          <EffectPanel />
-        </Tabs.Panel>
-      )}
     </Tabs>
   );
 }

@@ -1,6 +1,8 @@
 import { Badge, Button, Group, Slider, Stack, Text } from "@mantine/core";
 import { useStore } from "../../store/useStore";
-import type { EffectDescriptor } from "../../types/forge";
+import type { ChassisSpec } from "../../rgb/deviceArt";
+import type { EffectDescriptor, LedLayout } from "../../types/forge";
+import { KeyboardPreview } from "./KeyboardPreview";
 
 const LEVEL_MARKS = [1, 2, 3, 4, 5].map((value) => ({ value }));
 
@@ -8,7 +10,15 @@ function hasParam(e: EffectDescriptor, type: string): boolean {
   return e.params.some((p) => p.type === type);
 }
 
-export function EffectPanel() {
+export function EffectPanel({
+  layout,
+  chassis,
+  screenAspect,
+}: {
+  layout: LedLayout;
+  chassis: ChassisSpec;
+  screenAspect?: number;
+}) {
   const rgb = useStore((s) => s.rgbCapability());
   const selectedEffectId = useStore((s) => s.selectedEffectId);
   const selectEffect = useStore((s) => s.selectEffect);
@@ -23,7 +33,24 @@ export function EffectPanel() {
   const selected = rgb.effects.find((e) => e.id === selectedEffectId);
 
   return (
-    <Stack gap="md" maw={640}>
+    <Stack gap="lg">
+      {selected && (
+        <div>
+          <KeyboardPreview
+            layout={layout}
+            chassis={chassis}
+            effectId={selected.id}
+            speedLevel={speed}
+            brightnessLevel={brightness}
+            color={activeColor}
+            screenAspect={screenAspect}
+          />
+          <Text size="xs" c="dimmed" mt={6}>
+            Live preview · simulated on screen — the device renders the real effect.
+          </Text>
+        </div>
+      )}
+
       <div>
         <Text size="sm" fw={600} mb={6}>
           Built-in animations
@@ -44,7 +71,7 @@ export function EffectPanel() {
       </div>
 
       {selected ? (
-        <Stack gap="sm">
+        <Stack gap="sm" maw={420}>
           <Group gap="xs">
             <Text fw={600}>{selected.name}</Text>
             {hasParam(selected, "color_list") && (
@@ -59,14 +86,7 @@ export function EffectPanel() {
               <Text size="xs" c="dimmed">
                 Speed
               </Text>
-              <Slider
-                min={1}
-                max={5}
-                step={1}
-                value={speed}
-                onChange={setSpeed}
-                marks={LEVEL_MARKS}
-              />
+              <Slider min={1} max={5} step={1} value={speed} onChange={setSpeed} marks={LEVEL_MARKS} />
             </div>
           )}
 
@@ -107,12 +127,12 @@ export function EffectPanel() {
           )}
 
           <Button mt="xs" w={200} onClick={() => void apply()}>
-            Apply effect
+            Apply to keyboard
           </Button>
         </Stack>
       ) : (
         <Text c="dimmed" size="sm">
-          Select an animation above to configure and apply it.
+          Select an animation above to preview and apply it.
         </Text>
       )}
     </Stack>

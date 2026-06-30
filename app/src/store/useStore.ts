@@ -84,7 +84,12 @@ export const useStore = create<ForgeState>((set, get) => {
       set({ selectedId: id, keyColors: {} });
       try {
         const capabilities = await ipc.getCapabilities(id);
-        set({ capabilities, status: `Selected ${id}` });
+        const rgb = capabilities.find((c): c is RgbCapability => c.kind === "rgb");
+        set({
+          capabilities,
+          selectedEffectId: rgb?.effects[0]?.id ?? null,
+          status: `Selected ${id}`,
+        });
       } catch (e) {
         set({ status: `Error loading capabilities: ${String(e)}` });
       }
