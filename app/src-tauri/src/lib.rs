@@ -7,9 +7,10 @@
 //! refinement) lands when the real protocol does.
 
 use serde::Serialize;
+use tauri::Manager;
 
 use forge_core::{Capability, EffectSelection, RgbCommand};
-use forge_profiles::{parse_profile, ProfileCatalog};
+use forge_profiles::{parse_profile, Preset, PresetStore, ProfileCatalog};
 use forge_registry::{match_devices, open_matched};
 use forge_transport::hidapi_backend::HidapiBackend;
 use forge_transport::HidBackend;
@@ -143,6 +144,32 @@ async fn set_effect(
     .map_err(|e| e.to_string())?
 }
 
+// --- User lighting presets (persisted to the app config dir) ----------------
+
+fn preset_store(app: &tauri::AppHandle) -> Result<PresetStore, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(PresetStore::new(dir.join("presets.json")))
+}
+
+#[tauri::command]
+async fn list_presets(app: tauri::AppHandle, device: String) -> Result<Vec<Preset>, String> {
+    preset_store(&app)?
+        .list_for(&device)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_preset(app: tauri::AppHandle, preset: Preset) -> Result<(), String> {
+    preset_store(&app)?.save(preset).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_preset(app: tauri::AppHandle, device: String, name: String) -> Result<(), String> {
+    preset_store(&app)?
+        .delete(&device, &name)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -153,7 +180,10 @@ pub fn run() {
             list_devices,
             get_capabilities,
             set_rgb,
-            set_effect
+            set_effect,
+            list_presets,
+            save_preset,
+            delete_preset
         ])
         .run(tauri::generate_context!())
         .expect("error while running IX Forge");

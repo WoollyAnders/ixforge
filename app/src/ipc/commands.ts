@@ -8,6 +8,7 @@ import type {
   Capability,
   DeviceSummary,
   EffectSelection,
+  Preset,
   RgbCommand,
 } from "../types/forge";
 import { IS_TAURI } from "./backend";
@@ -40,4 +41,18 @@ export async function setEffect(
   } else {
     await mock.setEffect(deviceId, sel);
   }
+}
+
+export async function listPresets(device: string): Promise<Preset[]> {
+  return IS_TAURI ? invoke<Preset[]>("list_presets", { device }) : mock.listPresets(device);
+}
+
+export async function savePreset(preset: Preset): Promise<void> {
+  if (IS_TAURI) await invoke("save_preset", { preset });
+  else await mock.savePreset(preset);
+}
+
+export async function deletePreset(device: string, name: string): Promise<void> {
+  if (IS_TAURI) await invoke("delete_preset", { device, name });
+  else await mock.deletePreset(device, name);
 }

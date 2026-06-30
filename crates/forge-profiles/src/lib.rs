@@ -7,6 +7,9 @@ use std::path::Path;
 
 use forge_core::{DeviceProfile, ForgeError, MatchInput};
 
+pub mod presets;
+pub use presets::{Preset, PresetStore};
+
 /// Parse a single [`DeviceProfile`] from TOML text.
 pub fn parse_profile(toml_str: &str) -> Result<DeviceProfile, ForgeError> {
     toml::from_str(toml_str).map_err(|e| ForgeError::InvalidProfile(e.to_string()))

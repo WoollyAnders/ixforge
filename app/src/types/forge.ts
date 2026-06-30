@@ -114,6 +114,13 @@ export interface DeviceSummary {
   capability_kinds: string[];
 }
 
+// A user-saved per-key lighting preset (matches forge-profiles Preset).
+export interface Preset {
+  name: string;
+  device: string;
+  keys: [string, Color][];
+}
+
 // --- small helpers --------------------------------------------------------
 
 export function hexToColor(hex: string): Color {

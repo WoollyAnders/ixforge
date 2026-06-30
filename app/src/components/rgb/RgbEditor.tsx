@@ -1,9 +1,10 @@
-import { Group, Tabs, Text } from "@mantine/core";
+import { Divider, Group, Stack, Tabs, Text } from "@mantine/core";
 import { useStore } from "../../store/useStore";
 import { chassisFor } from "../../rgb/deviceArt";
 import { KeyboardCanvas } from "./KeyboardCanvas";
 import { ColorTools } from "./ColorTools";
 import { EffectPanel } from "./EffectPanel";
+import { PresetBar } from "./PresetBar";
 
 export function RgbEditor() {
   const rgb = useStore((s) => s.rgbCapability());
@@ -39,12 +40,16 @@ export function RgbEditor() {
       )}
 
       <Tabs.Panel value="custom">
-        <Group align="flex-start" gap="lg" wrap="nowrap">
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <KeyboardCanvas layout={rgb.layout} chassis={chassis} screenAspect={screenAspect} />
-          </div>
-          <ColorTools />
-        </Group>
+        <Stack gap="md">
+          <Group align="flex-start" gap="lg" wrap="nowrap">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <KeyboardCanvas layout={rgb.layout} chassis={chassis} screenAspect={screenAspect} />
+            </div>
+            <ColorTools />
+          </Group>
+          <Divider />
+          <PresetBar />
+        </Stack>
       </Tabs.Panel>
     </Tabs>
   );

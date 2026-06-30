@@ -4,8 +4,10 @@ import {
   type Capability,
   type DeviceSummary,
   type EffectSelection,
+  type Preset,
   type RgbCapability,
   type RgbCommand,
+  colorToHex,
   hexToColor,
 } from "../types/forge";
 
@@ -39,6 +41,13 @@ interface ForgeState {
   setEffectSpeed: (n: number) => void;
   setEffectBrightness: (n: number) => void;
   applyEffect: () => Promise<void>;
+
+  // Saved per-key presets for the selected device
+  presets: Preset[];
+  loadPresets: () => Promise<void>;
+  saveCurrentPreset: (name: string) => Promise<void>;
+  applyPreset: (preset: Preset) => Promise<void>;
+  deletePreset: (name: string) => Promise<void>;
 }
 
 export const useStore = create<ForgeState>((set, get) => {
@@ -65,6 +74,8 @@ export const useStore = create<ForgeState>((set, get) => {
     effectSpeed: 3,
     effectBrightness: 4,
 
+    presets: [],
+
     async refreshDevices() {
       set({ loading: true });
       try {
@@ -90,6 +101,7 @@ export const useStore = create<ForgeState>((set, get) => {
           selectedEffectId: rgb?.effects[0]?.id ?? null,
           status: `Selected ${id}`,
         });
+        await get().loadPresets();
       } catch (e) {
         set({ status: `Error loading capabilities: ${String(e)}` });
       }
@@ -168,6 +180,56 @@ export const useStore = create<ForgeState>((set, get) => {
         set({ status: `Applied effect "${selectedEffectId}"` });
       } catch (e) {
         set({ status: `Error: ${String(e)}` });
+      }
+    },
+
+    async loadPresets() {
+      const { selectedId } = get();
+      if (!selectedId) {
+        set({ presets: [] });
+        return;
+      }
+      try {
+        set({ presets: await ipc.listPresets(selectedId) });
+      } catch (e) {
+        set({ status: `Error loading presets: ${String(e)}` });
+      }
+    },
+
+    async saveCurrentPreset(name) {
+      const { selectedId, keyColors } = get();
+      const trimmed = name.trim();
+      if (!selectedId || !trimmed) return;
+      const keys = Object.entries(keyColors).map(
+        ([k, hex]) => [k, hexToColor(hex)] as [string, ReturnType<typeof hexToColor>],
+      );
+      try {
+        await ipc.savePreset({ name: trimmed, device: selectedId, keys });
+        await get().loadPresets();
+        set({ status: `Saved preset "${trimmed}"` });
+      } catch (e) {
+        set({ status: `Error saving preset: ${String(e)}` });
+      }
+    },
+
+    async applyPreset(preset) {
+      const { selectedId } = get();
+      if (!selectedId) return;
+      const keyColors: Record<string, string> = {};
+      for (const [k, c] of preset.keys) keyColors[k] = colorToHex(c);
+      set({ keyColors });
+      await send(selectedId, { set_keys: preset.keys }, `Applied preset "${preset.name}"`);
+    },
+
+    async deletePreset(name) {
+      const { selectedId } = get();
+      if (!selectedId) return;
+      try {
+        await ipc.deletePreset(selectedId, name);
+        await get().loadPresets();
+        set({ status: `Deleted preset "${name}"` });
+      } catch (e) {
+        set({ status: `Error deleting preset: ${String(e)}` });
       }
     },
   };

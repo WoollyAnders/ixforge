@@ -12,6 +12,7 @@ import type {
   EffectSelection,
   KeyDef,
   LedLayout,
+  Preset,
   RgbCommand,
 } from "../types/forge";
 
@@ -171,4 +172,37 @@ export async function setEffect(
 ): Promise<void> {
   // eslint-disable-next-line no-console
   console.info("[mock] set_effect", deviceId, sel);
+}
+
+// Presets persist to localStorage in browser mode (the app uses a real file).
+const PRESET_KEY = "ixforge:presets";
+
+function readPresets(): Preset[] {
+  try {
+    return JSON.parse(localStorage.getItem(PRESET_KEY) ?? "[]") as Preset[];
+  } catch {
+    return [];
+  }
+}
+
+function writePresets(all: Preset[]): void {
+  localStorage.setItem(PRESET_KEY, JSON.stringify(all));
+}
+
+export async function listPresets(device: string): Promise<Preset[]> {
+  return readPresets().filter((p) => p.device === device);
+}
+
+export async function savePreset(preset: Preset): Promise<void> {
+  const all = readPresets().filter(
+    (p) => !(p.device === preset.device && p.name === preset.name),
+  );
+  all.push(preset);
+  writePresets(all);
+}
+
+export async function deletePreset(device: string, name: string): Promise<void> {
+  writePresets(
+    readPresets().filter((p) => !(p.device === device && p.name === name)),
+  );
 }
