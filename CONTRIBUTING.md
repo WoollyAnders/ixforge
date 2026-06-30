@@ -29,12 +29,20 @@ hardware. PRs touching ISP/bootloader flows will not be accepted.
 
 Most devices need **no Rust** if they're in a supported controller family:
 
-1. Capture and decode the protocol (see `docs/protocols/aula-f75.md` for the
+1. Capture and decode the protocol (see `docs/protocols/aula-f108-pro.md` for the
    template and the workflow).
 2. Add `profiles/<vendor>/<model>.toml` — matcher, `driver.variant` knobs, and
-   the full LED `layout`.
+   the full LED `layout` (key positions). Optionally add a UI `ChassisSpec` in
+   `app/src/rgb/deviceArt.ts` for the case/knob/screen rendition.
 3. Add a golden-byte test asserting the driver encodes a known command to the
    exact captured bytes (use `forge_transport::MockTransport`).
+
+**Reference images & the rendition.** The keyboard rendition is drawn from
+*coordinates*, not images. To trace a new board's layout you may use a reference
+photo, but **don't commit third-party product images** (they're copyrighted — see
+the clean-room policy). Keep references in `assets/refs/` (gitignored) and commit
+only the derived data (the profile layout + chassis spec). Use your own photo, or
+one you have rights to, as the reference.
 
 A brand-new controller family is a new module in `crates/forge-drivers/`
 implementing the `Driver`/`DeviceSession` traits from `forge-core`.

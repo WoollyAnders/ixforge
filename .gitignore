@@ -25,3 +25,8 @@ app/src-tauri/gen
 # rather than by accident. Protocol *notes* (docs/protocols/*.md) ARE committed.
 /captures/*.pcap
 /captures/*.pcapng
+
+# Device reference images are tracing inputs only — keep them LOCAL, never commit
+# third-party product photos (copyrighted). Put references here; commit the
+# derived data (profiles + deviceArt chassis specs), not the images.
+/assets/refs/
