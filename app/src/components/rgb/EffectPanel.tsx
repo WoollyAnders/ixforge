@@ -34,7 +34,7 @@ export function EffectPanel() {
               key={e.id}
               size="compact-sm"
               variant={e.id === selectedEffectId ? "filled" : "light"}
-              color={e.id === selectedEffectId ? "orange" : "gray"}
+              color={e.id === selectedEffectId ? "brand" : "gray"}
               onClick={() => selectEffect(e.id)}
             >
               {e.name}

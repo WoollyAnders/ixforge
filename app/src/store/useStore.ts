@@ -58,7 +58,7 @@ export const useStore = create<ForgeState>((set, get) => {
     loading: false,
     status: "Ready",
 
-    activeColor: "#ff5a00",
+    activeColor: "#22d3ee",
     keyColors: {},
 
     selectedEffectId: null,

@@ -15,54 +15,86 @@ import type {
   RgbCommand,
 } from "../types/forge";
 
-// Build a representative full-size-ish layout programmatically. Real layouts and
-// led_index values come from the device profile once captured.
+// Full-size AULA F108 Pro layout, traced from the V3 product image: function
+// row, main block, nav column, arrows, and the numpad. The volume knob and LCD
+// screen at the top-right are chassis elements (see deviceArt), not keys.
+// led_index is sequential here (browser preview); real indices come from capture.
 function buildLayout(): LedLayout {
   const keys: KeyDef[] = [];
   let led = 0;
-  const add = (id: string, label: string, x: number, y: number, w = 1, h = 1) => {
+  const add = (id: string, label: string, x: number, y: number, w = 1, h = 1) =>
     keys.push({ id, label, x, y, w, h, led_index: led++ });
-  };
 
-  // Function row
+  const NAV = 15.25; // nav/edit column (Ins/Home/PgUp …)
+  const NUM = 18.5; // numpad
+
+  // Function row (y0)
   add("KC_ESC", "Esc", 0, 0);
   ["F1", "F2", "F3", "F4"].forEach((l, i) => add(`KC_${l}`, l, 2 + i, 0));
   ["F5", "F6", "F7", "F8"].forEach((l, i) => add(`KC_${l}`, l, 6.5 + i, 0));
   ["F9", "F10", "F11", "F12"].forEach((l, i) => add(`KC_${l}`, l, 11 + i, 0));
-  add("KC_KNOB", "◉", 15.25, 0); // the F108 Pro knob, shown as a key for now
+  add("KC_PSCR", "PrtSc", NAV, 0);
+  add("KC_SLCK", "ScrLk", NAV + 1, 0);
+  add("KC_PAUS", "Paus", NAV + 2, 0);
 
-  // Number row
-  const r1 = ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="];
-  r1.forEach((l, i) => add(`KC_R1_${i}`, l, i, 1.25));
-  add("KC_BSPC", "Bksp", r1.length, 1.25, 2);
+  // Number row (y1)
+  ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="].forEach((l, i) =>
+    add(`KC_R1_${i}`, l, i, 1),
+  );
+  add("KC_BSPC", "Bksp", 13, 1, 2);
+  add("KC_INS", "Ins", NAV, 1);
+  add("KC_HOME", "Home", NAV + 1, 1);
+  add("KC_PGUP", "PgUp", NAV + 2, 1);
+  add("KC_NUM", "Num", NUM, 1);
+  add("KC_PSLS", "/", NUM + 1, 1);
+  add("KC_PAST", "*", NUM + 2, 1);
+  add("KC_PMNS", "-", NUM + 3, 1);
 
-  // QWERTY row
-  add("KC_TAB", "Tab", 0, 2.25, 1.5);
-  const r2 = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"];
-  r2.forEach((l, i) => add(`KC_R2_${i}`, l, 1.5 + i, 2.25));
+  // QWERTY row (y2)
+  add("KC_TAB", "Tab", 0, 2, 1.5);
+  ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"].forEach((l, i) =>
+    add(`KC_R2_${i}`, l, 1.5 + i, 2),
+  );
+  add("KC_DEL", "Del", NAV, 2);
+  add("KC_END", "End", NAV + 1, 2);
+  add("KC_PGDN", "PgDn", NAV + 2, 2);
+  ["7", "8", "9"].forEach((l, i) => add(`KC_P${l}`, l, NUM + i, 2));
+  add("KC_PPLS", "+", NUM + 3, 2, 1, 2); // tall
 
-  // Home row
-  add("KC_CAPS", "Caps", 0, 3.25, 1.75);
-  const r3 = ["A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'"];
-  r3.forEach((l, i) => add(`KC_R3_${i}`, l, 1.75 + i, 3.25));
-  add("KC_ENT", "Enter", 1.75 + r3.length, 3.25, 2.25);
+  // Home row (y3)
+  add("KC_CAPS", "Caps", 0, 3, 1.75);
+  ["A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'"].forEach((l, i) =>
+    add(`KC_R3_${i}`, l, 1.75 + i, 3),
+  );
+  add("KC_ENT", "Enter", 12.75, 3, 2.25);
+  ["4", "5", "6"].forEach((l, i) => add(`KC_P${l}`, l, NUM + i, 3));
 
-  // Bottom letter row
-  add("KC_LSFT", "Shift", 0, 4.25, 2.25);
-  const r4 = ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "/"];
-  r4.forEach((l, i) => add(`KC_R4_${i}`, l, 2.25 + i, 4.25));
-  add("KC_RSFT", "Shift", 2.25 + r4.length, 4.25, 2.75);
+  // Bottom letter row (y4)
+  add("KC_LSFT", "Shift", 0, 4, 2.25);
+  ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "/"].forEach((l, i) =>
+    add(`KC_R4_${i}`, l, 2.25 + i, 4),
+  );
+  add("KC_RSFT", "Shift", 12.25, 4, 2.75);
+  add("KC_UP", "↑", NAV + 1, 4);
+  ["1", "2", "3"].forEach((l, i) => add(`KC_P${l}`, l, NUM + i, 4));
+  add("KC_PENT", "Ent", NUM + 3, 4, 1, 2); // tall
 
-  // Space row
-  add("KC_LCTL", "Ctrl", 0, 5.25, 1.25);
-  add("KC_LGUI", "Win", 1.25, 5.25, 1.25);
-  add("KC_LALT", "Alt", 2.5, 5.25, 1.25);
-  add("KC_SPC", "", 3.75, 5.25, 6.25);
-  add("KC_RALT", "Alt", 10, 5.25, 1.25);
-  add("KC_FN", "Fn", 11.25, 5.25, 1.25);
-  add("KC_RCTL", "Ctrl", 12.5, 5.25, 1.25);
+  // Bottom row (y5)
+  add("KC_LCTL", "Ctrl", 0, 5, 1.25);
+  add("KC_LGUI", "Win", 1.25, 5, 1.25);
+  add("KC_LALT", "Alt", 2.5, 5, 1.25);
+  add("KC_SPC", "", 3.75, 5, 6.25);
+  add("KC_RALT", "Alt", 10, 5, 1.25);
+  add("KC_FN", "Fn", 11.25, 5, 1.25);
+  add("KC_MENU", "Menu", 12.5, 5, 1.25);
+  add("KC_RCTL", "Ctrl", 13.75, 5, 1.25);
+  add("KC_LEFT", "←", NAV, 5);
+  add("KC_DOWN", "↓", NAV + 1, 5);
+  add("KC_RGHT", "→", NAV + 2, 5);
+  add("KC_P0", "0", NUM, 5, 2);
+  add("KC_PDOT", ".", NUM + 2, 5);
 
-  return { keys, matrix_size: [6, 21] };
+  return { keys, matrix_size: [6, 22] };
 }
 
 const LAYOUT = buildLayout();

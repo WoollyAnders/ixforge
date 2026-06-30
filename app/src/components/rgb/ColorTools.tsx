@@ -3,14 +3,14 @@ import { Button, ColorSwatch, Group, Stack, Text } from "@mantine/core";
 import { useStore } from "../../store/useStore";
 
 const PRESETS = [
-  "#ff5a00",
-  "#ff0040",
-  "#00e0ff",
-  "#39ff14",
-  "#ffffff",
-  "#8a2be2",
-  "#ffd700",
-  "#000000",
+  "#22d3ee", // brand cyan
+  "#3b82f6", // blue
+  "#ffffff", // white
+  "#a855f7", // purple
+  "#ff0040", // red
+  "#39ff14", // green
+  "#ffd700", // gold
+  "#000000", // off
 ];
 
 export function ColorTools() {

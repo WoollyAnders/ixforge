@@ -41,7 +41,7 @@ export function DeviceDashboard() {
               borderRadius: 8,
               border: "1px solid var(--mantine-color-dark-4)",
               background: active ? "var(--mantine-color-dark-6)" : "transparent",
-              outline: active ? "1px solid var(--mantine-color-orange-5)" : "none",
+              outline: active ? "1px solid var(--mantine-color-brand-5)" : "none",
             }}
           >
             <Text size="sm" fw={500}>

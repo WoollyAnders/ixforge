@@ -19,7 +19,7 @@ export default function App() {
     <Box style={{ display: "grid", gridTemplateRows: "auto 1fr auto", height: "100vh" }}>
       <Group justify="space-between" px="md" py="sm" style={{ borderBottom: border }}>
         <Group gap="xs" align="baseline">
-          <Title order={3} c="orange.4">
+          <Title order={3} c="brand.4">
             IX Forge
           </Title>
           <Text size="sm" c="dimmed">
