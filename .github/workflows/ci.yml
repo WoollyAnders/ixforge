@@ -43,17 +43,34 @@ jobs:
         with:
           command: check licenses bans sources
 
-  # Added when forge-app + the React front end land. Builds the full Tauri app and
-  # installer on Windows (the primary target) and verifies hidapi compiles.
-  #
-  # app-windows:
-  #   name: Build app (Windows)
-  #   runs-on: windows-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: dtolnay/rust-toolchain@stable
-  #     - uses: actions/setup-node@v4
-  #       with: { node-version: 20 }
-  #     - run: corepack enable
-  #     - run: pnpm install --frozen-lockfile
-  #     - run: pnpm tauri build
+  app:
+    name: Build app + CLI + front end (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri + HID system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libsoup-3.0-dev librsvg2-dev libudev-dev libayatana-appindicator3-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: corepack enable
+
+      - name: Install front-end deps
+        run: corepack pnpm -C app install --frozen-lockfile
+      - name: Typecheck + build front end
+        run: |
+          corepack pnpm -C app exec tsc --noEmit
+          corepack pnpm -C app build
+      # Compiles the hidapi backend (forge-cli) and the full Tauri app, embedding
+      # the freshly built front end. Respects Cargo.lock (which pins `time` to a
+      # version compatible with tauri's `cookie` dep).
+      - name: Build Rust app + CLI
+        run: cargo build -p forge-app -p forge-cli
+
+  # Windows release builds (signed installer) are added later; see the plan.
+  # runs-on: windows-latest → pnpm -C app tauri build

@@ -1,0 +1,19 @@
+[package]
+name = "forge-cli"
+description = "IX Forge developer CLI — fire commands at real hardware during protocol bring-up."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "forge-cli"
+path = "src/main.rs"
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+forge-transport = { path = "../forge-transport" }
+forge-profiles = { path = "../forge-profiles" }
+forge-drivers = { path = "../forge-drivers" }
+forge-registry = { path = "../forge-registry" }

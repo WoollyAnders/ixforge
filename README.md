@@ -21,8 +21,9 @@ crates/
   forge-drivers/    Per-controller-family protocol encoders (sonix, sinowealth, ...).
   forge-registry/   Enumeration, profile/driver matching, hotplug, per-device actors.
   forge-macro/      Macro AST + host-side replay engine (feature-gated).
-  forge-app/        Tauri app: IPC commands, events, the only binary.
-app/                React + TypeScript + Vite front end.
+  forge-cli/        Developer CLI: fire commands at real hardware during bring-up.
+app/                React + TypeScript + Vite front end (capability-driven UI).
+app/src-tauri/      Tauri app (the `forge-app` crate): IPC commands + the binary.
 profiles/           Device profiles (TOML), embedded + shippable.
 docs/protocols/     Clean-room protocol notes per device.
 ```
@@ -36,11 +37,32 @@ Early foundation. Roadmap: **M0** RGB vertical slice → **M1** RGB breadth → 
 Most logic is hardware-free and testable anywhere (`MockTransport`):
 
 ```sh
-cargo test            # core, transport, drivers (golden-byte fixtures)
+cargo test -p forge-core -p forge-profiles -p forge-drivers -p forge-registry -p forge-macro
 cargo deny check      # enforce permissive-only dependency policy
 ```
 
+Run the desktop app (Tauri + React):
+
+```sh
+cd app && pnpm install && pnpm tauri dev
+```
+
+The front end also runs in a plain browser with a **mock device** (no hardware/Tauri):
+
+```sh
+cd app && pnpm dev      # open the printed localhost URL
+```
+
+Fire a command at real hardware during protocol bring-up:
+
+```sh
+cargo run -p forge-cli -- set-rgb --key KC_ESC --color ff0000
+```
+
 On-hardware testing and USB protocol capture (USBPcap + Wireshark) happen on **native Windows**.
+The Tauri app and `forge-cli` need system libraries: webview (`webkit2gtk` on Linux; bundled on
+Windows/macOS) and `libudev` on Linux for HID. The committed `Cargo.lock` pins `time` to a release
+compatible with Tauri's `cookie` dependency.
 
 ## License
 

@@ -11,8 +11,8 @@
 use serde::de::DeserializeOwned;
 
 use forge_core::{
-    Capability, Color, ColorOrder, DeviceProfile, DeviceSession, ForgeError, HidTransport,
-    LedLayout, RgbCommand,
+    Capability, Color, ColorOrder, DeviceProfile, DeviceSession, EffectSelection, ForgeError,
+    HidTransport, LedLayout, RgbCommand,
 };
 
 /// Wire framing parameters for a paged full-frame LED write.
@@ -24,6 +24,8 @@ pub struct FrameParams {
     pub packet_size: usize,
     /// Opcode byte for a full-frame write.
     pub opcode: u8,
+    /// Opcode byte for selecting a built-in effect.
+    pub effect_opcode: u8,
     /// Bytes reserved before the color payload: `[report_id, opcode, off_hi, off_lo]`.
     pub header_len: usize,
     /// Physical channel order of the LEDs.
@@ -143,6 +145,26 @@ pub struct PlaceholderSession {
     pub frame: FrameParams,
 }
 
+impl PlaceholderSession {
+    /// Onboard index of an effect = its position in the profile's effects list
+    /// (profiles list effects in the device's cycle order).
+    fn effect_index(&self, effect_id: &str) -> Result<u8, ForgeError> {
+        let effects = self
+            .capabilities
+            .iter()
+            .find_map(|c| match c {
+                Capability::Rgb(rgb) => Some(&rgb.effects),
+                _ => None,
+            })
+            .ok_or(ForgeError::NotSupported)?;
+        effects
+            .iter()
+            .position(|e| e.id == effect_id)
+            .map(|p| p as u8)
+            .ok_or_else(|| ForgeError::InvalidArgument(format!("unknown effect {effect_id:?}")))
+    }
+}
+
 impl DeviceSession for PlaceholderSession {
     fn capabilities(&self) -> &[Capability] {
         &self.capabilities
@@ -156,22 +178,50 @@ impl DeviceSession for PlaceholderSession {
         }
         Ok(())
     }
+
+    /// Select a built-in effect (PLACEHOLDER framing — replace with the captured
+    /// protocol): `[report_id, effect_opcode, index, speed, brightness, r, g, b]`.
+    fn set_effect(&mut self, sel: &EffectSelection) -> Result<(), ForgeError> {
+        let index = self.effect_index(&sel.effect_id)?;
+        let p = self.frame;
+        if p.packet_size < 4 {
+            return Err(ForgeError::InvalidProfile("packet_size too small".into()));
+        }
+        let mut report = vec![0u8; p.packet_size];
+        report[0] = p.report_id;
+        report[1] = p.effect_opcode;
+        report[2] = index;
+        report[3] = sel.speed.unwrap_or(3);
+        if p.packet_size > 4 {
+            report[4] = sel.brightness.unwrap_or(4);
+        }
+        if p.packet_size >= 8 {
+            let color = sel.colors.first().copied().unwrap_or(Color::WHITE);
+            report[5..8].copy_from_slice(&color.to_order(p.color_order));
+        }
+        self.transport.send_feature_report(&report)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn paged_frame_places_color_after_header() {
-        let p = FrameParams {
+    fn params(packet_size: usize) -> FrameParams {
+        FrameParams {
             report_id: 0x06,
-            packet_size: 65,
+            packet_size,
             opcode: 0x01,
+            effect_opcode: 0x02,
             header_len: 4,
             color_order: ColorOrder::Rgb,
-        };
-        let reports = encode_paged_frame(p, &[Color::RED]).unwrap();
+        }
+    }
+
+    #[test]
+    fn paged_frame_places_color_after_header() {
+        let reports = encode_paged_frame(params(65), &[Color::RED]).unwrap();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].len(), 65);
         assert_eq!(reports[0][0], 0x06);
@@ -181,19 +231,107 @@ mod tests {
 
     #[test]
     fn frame_pages_large_buffers() {
-        let p = FrameParams {
-            report_id: 0,
-            packet_size: 10, // body = 6 bytes = 2 leds per report
-            opcode: 0,
-            header_len: 4,
-            color_order: ColorOrder::Rgb,
-        };
-        let reports = encode_paged_frame(p, &[Color::RED; 5]).unwrap();
+        // packet_size 10 → body = 6 bytes = 2 leds per report
+        let reports = encode_paged_frame(params(10), &[Color::RED; 5]).unwrap();
         assert_eq!(
             reports.len(),
             3,
             "5 leds * 3 bytes / 6 per report = 3 reports"
         );
         assert_eq!(reports[1][3], 6, "second page offset = 6");
+    }
+
+    #[test]
+    fn set_effect_encodes_index_and_params() {
+        use forge_core::{
+            EffectDescriptor, EffectSelection, KeyDef, KeyId, LedLayout, RgbCapability, RgbMode,
+        };
+        use forge_transport::MockTransport;
+
+        let effects = vec![
+            EffectDescriptor {
+                id: "static".into(),
+                name: "Static".into(),
+                params: vec![],
+            },
+            EffectDescriptor {
+                id: "breathing".into(),
+                name: "Breathing".into(),
+                params: vec![],
+            },
+            EffectDescriptor {
+                id: "wave".into(),
+                name: "Wave".into(),
+                params: vec![],
+            },
+        ];
+        let rgb = RgbCapability {
+            mode: RgbMode::PerKey,
+            layout: LedLayout {
+                keys: vec![KeyDef {
+                    id: KeyId::from("KC_ESC"),
+                    label: "Esc".into(),
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                    led_index: Some(0),
+                }],
+                matrix_size: (1, 1),
+            },
+            effects,
+            max_brightness: 255,
+            color_order: ColorOrder::Rgb,
+        };
+        let mock = MockTransport::new();
+        let mut session = PlaceholderSession {
+            capabilities: vec![Capability::Rgb(rgb.clone())],
+            transport: Box::new(mock.clone()),
+            layout: rgb.layout.clone(),
+            frame: params(64),
+        };
+
+        session
+            .set_effect(&EffectSelection {
+                effect_id: "wave".into(), // index 2
+                speed: Some(5),
+                brightness: Some(4),
+                colors: vec![Color::GREEN],
+            })
+            .unwrap();
+
+        let reports = mock.feature_writes();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0][1], 0x02, "effect opcode");
+        assert_eq!(reports[0][2], 2, "effect index (position of 'wave')");
+        assert_eq!(reports[0][3], 5, "speed");
+        assert_eq!(reports[0][4], 4, "brightness");
+        assert_eq!(&reports[0][5..8], &[0x00, 0xff, 0x00], "green");
+    }
+
+    #[test]
+    fn set_effect_rejects_unknown_id() {
+        use forge_core::EffectSelection;
+        use forge_transport::MockTransport;
+
+        let mut session = PlaceholderSession {
+            capabilities: vec![],
+            transport: Box::new(MockTransport::new()),
+            layout: super::LedLayout {
+                keys: vec![],
+                matrix_size: (0, 0),
+            },
+            frame: params(64),
+        };
+        let err = session
+            .set_effect(&EffectSelection {
+                effect_id: "nope".into(),
+                speed: None,
+                brightness: None,
+                colors: vec![],
+            })
+            .unwrap_err();
+        // No RGB capability at all → NotSupported.
+        assert!(matches!(err, ForgeError::NotSupported));
     }
 }

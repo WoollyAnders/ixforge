@@ -7,10 +7,12 @@ members = [
     "crates/forge-drivers",
     "crates/forge-registry",
     "crates/forge-macro",
+    "crates/forge-cli",
+    "app/src-tauri",
 ]
-# `forge-app` (the Tauri binary) is added during front-end scaffolding. It pulls
-# platform webview libraries and is built on the target OS, not in the library
-# test job, so it is intentionally absent here for now.
+# The hardware-free CI/test job scopes itself to the library crates with `-p`
+# (see .github/workflows/ci.yml). `forge-app` (Tauri, needs webview libs) and
+# `forge-cli` (needs libudev for hidapi) are built on the target OS.
 
 [workspace.package]
 version = "0.1.0"

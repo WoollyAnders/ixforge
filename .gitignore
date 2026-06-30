@@ -10,8 +10,9 @@ dist-ssr
 .vite
 *.local
 
-# Tauri build output
+# Tauri build output + generated schemas
 app/src-tauri/target
+app/src-tauri/gen
 
 # Editor / OS
 .DS_Store

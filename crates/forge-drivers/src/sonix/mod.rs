@@ -47,6 +47,7 @@ pub struct SonixVariant {
     pub report_id: u8,
     pub packet_size: usize,
     pub set_frame_opcode: u8,
+    pub set_effect_opcode: u8,
     pub color_order: ColorOrder,
 }
 
@@ -56,6 +57,7 @@ impl SonixVariant {
             report_id: self.report_id,
             packet_size: self.packet_size,
             opcode: self.set_frame_opcode,
+            effect_opcode: self.set_effect_opcode,
             header_len: 4,
             color_order: self.color_order,
         }
@@ -70,6 +72,7 @@ impl Default for SonixVariant {
             report_id: 0x00,
             packet_size: 64,
             set_frame_opcode: 0x00,
+            set_effect_opcode: 0x02,
             color_order: ColorOrder::Rgb,
         }
     }

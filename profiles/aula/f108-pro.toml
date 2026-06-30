@@ -26,10 +26,11 @@ family = "sonix"
 
 # RGB framing knobs consumed by the Sonix driver. All PLACEHOLDER until decoded.
 [driver.variant]
-report_id = 0x00        # TODO from capture
-packet_size = 64        # TODO total report length incl. report id
-set_frame_opcode = 0x00 # TODO
-color_order = "RGB"     # TODO — confirm channel order
+report_id = 0x00         # TODO from capture
+packet_size = 64         # TODO total report length incl. report id
+set_frame_opcode = 0x00  # TODO
+set_effect_opcode = 0x02 # TODO — opcode that selects a built-in effect
+color_order = "RGB"      # TODO — confirm channel order
 
 [provenance]
 captured_by = ""        # your name / handle
@@ -44,6 +45,30 @@ kind = "rgb"
 mode = "per_key"
 max_brightness = 255
 color_order = "RGB"
+
+# Built-in onboard animations (the F108 Pro cycles ~19 with FN+\, plus Off).
+# Listed in cycle order — the SonixDriver uses each effect's POSITION as its
+# onboard index. Names/order/params below are PROVISIONAL, seeded from the
+# documented stock modes; confirm exact names, order, and per-effect bytes from
+# the manual or your capture. Speed/brightness use the device's 5 levels (1..5).
+effects = [
+  { id = "static", name = "Static", params = [{ type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
+  { id = "breathing", name = "Breathing", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
+  { id = "spectrum", name = "Spectrum Cycle", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
+  { id = "wave", name = "Rainbow Wave", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
+  { id = "ripple", name = "Ripple", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
+  { id = "reactive", name = "Reactive", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
+  { id = "raindrop", name = "Raindrop", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
+  { id = "snake", name = "Snake", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
+  { id = "aurora", name = "Aurora", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
+  { id = "neon_stream", name = "Neon Stream", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
+  { id = "scan", name = "Scan", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
+  { id = "stars", name = "Twinkling Stars", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
+  { id = "spiral", name = "Spiral", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
+  { id = "radar", name = "Radar Sweep", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
+  { id = "flash_away", name = "Flash Away", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
+  { id = "music", name = "Music Rhythm", params = [{ type = "brightness", min = 1, max = 5, default = 4 }] },
+]
 
 [capabilities.layout]
 # x/y in key units (1.0 == one key); w/h default to 1.0. led_index = position in

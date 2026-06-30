@@ -1,0 +1,28 @@
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0e0f13;
+}
+
+/* The keyboard editor canvas */
+.kbd-key {
+  cursor: pointer;
+  transition: stroke 0.08s ease;
+}
+.kbd-key:hover {
+  stroke: var(--mantine-color-orange-4);
+  stroke-width: 2;
+}
+.kbd-key--selected {
+  stroke: var(--mantine-color-orange-5);
+  stroke-width: 2.5;
+}

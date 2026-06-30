@@ -1,0 +1,29 @@
+[package]
+name = "forge-app"
+description = "IX Forge desktop application (Tauri 2)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "forge_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "ix-forge"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+forge-core = { path = "../../crates/forge-core" }
+forge-transport = { path = "../../crates/forge-transport" }
+forge-profiles = { path = "../../crates/forge-profiles" }
+forge-drivers = { path = "../../crates/forge-drivers" }
+forge-registry = { path = "../../crates/forge-registry" }

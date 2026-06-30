@@ -46,6 +46,7 @@ pub struct SinoVariant {
     pub report_id: u8,
     pub packet_size: usize,
     pub set_frame_opcode: u8,
+    pub set_effect_opcode: u8,
     pub color_order: ColorOrder,
 }
 
@@ -55,6 +56,7 @@ impl SinoVariant {
             report_id: self.report_id,
             packet_size: self.packet_size,
             opcode: self.set_frame_opcode,
+            effect_opcode: self.set_effect_opcode,
             header_len: 4,
             color_order: self.color_order,
         }
@@ -68,6 +70,7 @@ impl Default for SinoVariant {
             report_id: 0x06,
             packet_size: 65,
             set_frame_opcode: 0x01,
+            set_effect_opcode: 0x02,
             color_order: ColorOrder::Rgb,
         }
     }
