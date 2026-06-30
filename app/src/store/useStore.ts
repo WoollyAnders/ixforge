@@ -48,6 +48,10 @@ interface ForgeState {
   saveCurrentPreset: (name: string) => Promise<void>;
   applyPreset: (preset: Preset) => Promise<void>;
   deletePreset: (name: string) => Promise<void>;
+
+  // Hotplug
+  deviceAttached: (device: DeviceSummary) => void;
+  deviceDetached: (id: string) => void;
 }
 
 export const useStore = create<ForgeState>((set, get) => {
@@ -231,6 +235,29 @@ export const useStore = create<ForgeState>((set, get) => {
       } catch (e) {
         set({ status: `Error deleting preset: ${String(e)}` });
       }
+    },
+
+    deviceAttached(device) {
+      if (!get().devices.some((d) => d.id === device.id)) {
+        set((s) => ({
+          devices: [...s.devices, device],
+          status: `${device.name} connected`,
+        }));
+      }
+      if (!get().selectedId) void get().selectDevice(device.id);
+    },
+
+    deviceDetached(id) {
+      set((s) => ({ devices: s.devices.filter((d) => d.id !== id) }));
+      if (get().selectedId === id) {
+        const next = get().devices[0]?.id ?? null;
+        if (next) {
+          void get().selectDevice(next);
+        } else {
+          set({ selectedId: null, capabilities: [], presets: [], keyColors: {} });
+        }
+      }
+      set({ status: "Device disconnected" });
     },
   };
 });

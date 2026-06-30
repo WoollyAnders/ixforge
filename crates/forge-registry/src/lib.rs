@@ -4,6 +4,8 @@
 //! [`HidBackend`] trait, so the whole matching+opening path is testable with a
 //! fake backend and `MockTransport` — no real USB and no `hidapi` feature.
 
+use std::collections::HashSet;
+
 use forge_core::{DeviceId, DeviceProfile, DeviceSession, Driver, ForgeError};
 use forge_profiles::ProfileCatalog;
 use forge_transport::{DeviceInfo, HidBackend};
@@ -56,6 +58,45 @@ pub fn open_matched(
     driver.open(matched.profile, transport)
 }
 
+/// What changed between two enumeration snapshots.
+pub struct Delta {
+    /// Devices present now but not in the previous snapshot.
+    pub attached: Vec<DeviceInfo>,
+    /// Ids present in the previous snapshot but gone now.
+    pub detached: Vec<DeviceId>,
+}
+
+/// Tracks the set of seen devices across polls so the app can emit hotplug
+/// events. Pure and hardware-agnostic — feed it each enumeration result.
+#[derive(Default)]
+pub struct DeviceWatcher {
+    seen: HashSet<DeviceId>,
+}
+
+impl DeviceWatcher {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Diff `current` against the last snapshot, update internal state, and
+    /// return what was attached/detached since.
+    pub fn diff(&mut self, current: Vec<DeviceInfo>) -> Delta {
+        let current_set: HashSet<DeviceId> = current.iter().map(device_id).collect();
+        let attached = current
+            .into_iter()
+            .filter(|i| !self.seen.contains(&device_id(i)))
+            .collect();
+        let detached = self
+            .seen
+            .iter()
+            .filter(|id| !current_set.contains(id))
+            .cloned()
+            .collect();
+        self.seen = current_set;
+        Delta { attached, detached }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,16 +122,39 @@ mod tests {
     "#;
 
     fn info() -> DeviceInfo {
+        info_sn("SN123")
+    }
+
+    fn info_sn(sn: &str) -> DeviceInfo {
         DeviceInfo {
-            path: "dev/test".into(),
+            path: format!("dev/{sn}"),
             vid: 0x258a,
             pid: 0x0049,
             usage_page: None,
             usage: None,
             interface: None,
-            serial: Some("SN123".into()),
+            serial: Some(sn.into()),
             product: Some("AULA Test".into()),
         }
+    }
+
+    #[test]
+    fn watcher_reports_attach_and_detach() {
+        let mut w = DeviceWatcher::new();
+
+        let d = w.diff(vec![info_sn("A"), info_sn("B")]);
+        assert_eq!(d.attached.len(), 2, "both new on first poll");
+        assert!(d.detached.is_empty());
+
+        // B stays, C arrives, A leaves.
+        let d = w.diff(vec![info_sn("B"), info_sn("C")]);
+        assert_eq!(d.attached.len(), 1);
+        assert_eq!(d.attached[0].serial.as_deref(), Some("C"));
+        assert_eq!(d.detached, vec![device_id(&info_sn("A"))]);
+
+        // No change.
+        let d = w.diff(vec![info_sn("B"), info_sn("C")]);
+        assert!(d.attached.is_empty() && d.detached.is_empty());
     }
 
     /// A fake backend that hands out MockTransports and records the last one.

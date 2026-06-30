@@ -6,12 +6,14 @@
 //! the current placeholder protocol; a persistent per-device actor (the planned
 //! refinement) lands when the real protocol does.
 
+use std::collections::HashSet;
+
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use forge_core::{Capability, EffectSelection, RgbCommand};
 use forge_profiles::{parse_profile, Preset, PresetStore, ProfileCatalog};
-use forge_registry::{match_devices, open_matched};
+use forge_registry::{device_id, match_devices, open_matched, DeviceWatcher};
 use forge_transport::hidapi_backend::HidapiBackend;
 use forge_transport::HidBackend;
 
@@ -37,12 +39,31 @@ fn load_catalog() -> ProfileCatalog {
 }
 
 /// What the UI lists in the device sidebar.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct DeviceSummary {
     id: String,
     name: String,
     connected: bool,
     capability_kinds: Vec<String>,
+}
+
+/// Payload for the `device://detached` hotplug event.
+#[derive(Clone, Serialize)]
+struct Detached {
+    id: String,
+}
+
+/// Build a summary for a matched device.
+fn summarize(
+    info: &forge_transport::DeviceInfo,
+    profile: &forge_core::DeviceProfile,
+) -> DeviceSummary {
+    DeviceSummary {
+        id: device_id(info).0,
+        name: profile.display_name.clone(),
+        connected: true,
+        capability_kinds: profile.capabilities.iter().map(capability_kind).collect(),
+    }
 }
 
 fn capability_kind(c: &Capability) -> String {
@@ -61,14 +82,13 @@ async fn list_devices(state: tauri::State<'_, AppState>) -> Result<Vec<DeviceSum
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<DeviceSummary>, String> {
         let backend = HidapiBackend::new().map_err(|e| e.to_string())?;
         let infos = backend.enumerate().map_err(|e| e.to_string())?;
+        // Dedup by device id — a device exposes several HID interfaces that can
+        // all match a vid/pid-only profile, but it's one device to the user.
+        let mut seen = HashSet::new();
         let summaries = match_devices(infos, &catalog)
-            .iter()
-            .map(|m| DeviceSummary {
-                id: forge_registry::device_id(&m.info).0,
-                name: m.profile.display_name.clone(),
-                connected: true,
-                capability_kinds: m.profile.capabilities.iter().map(capability_kind).collect(),
-            })
+            .into_iter()
+            .filter(|m| seen.insert(device_id(&m.info)))
+            .map(|m| summarize(&m.info, m.profile))
             .collect();
         Ok(summaries)
     })
@@ -170,11 +190,54 @@ async fn delete_preset(app: tauri::AppHandle, device: String, name: String) -> R
         .map_err(|e| e.to_string())
 }
 
+/// Background hotplug poller: emits `device://attached` / `device://detached`
+/// as supported devices connect/disconnect. Runs on its own thread because the
+/// `hidapi` handle is blocking and not `Send`, so the backend lives entirely here.
+fn hotplug_loop(app: tauri::AppHandle) {
+    let catalog = load_catalog();
+    let mut backend = match HidapiBackend::new() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("IX Forge: hotplug disabled ({e})");
+            return;
+        }
+    };
+    let mut watcher = DeviceWatcher::new();
+    loop {
+        if backend.refresh().is_ok() {
+            if let Ok(infos) = backend.enumerate() {
+                // Track only supported devices, deduped by id.
+                let mut seen = HashSet::new();
+                let matched: Vec<_> = infos
+                    .into_iter()
+                    .filter(|i| catalog.match_device(&i.match_input()).is_some())
+                    .filter(|i| seen.insert(device_id(i)))
+                    .collect();
+                let delta = watcher.diff(matched);
+                for info in &delta.attached {
+                    if let Some(profile) = catalog.match_device(&info.match_input()) {
+                        let _ = app.emit("device://attached", summarize(info, profile));
+                    }
+                }
+                for id in delta.detached {
+                    let _ = app.emit("device://detached", Detached { id: id.0 });
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             catalog: load_catalog(),
+        })
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || hotplug_loop(handle));
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_devices,

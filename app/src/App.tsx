@@ -4,16 +4,27 @@ import { useStore } from "./store/useStore";
 import { DeviceDashboard } from "./components/DeviceDashboard";
 import { CapabilityRouter } from "./components/CapabilityRouter";
 import { IS_TAURI } from "./ipc/backend";
+import { subscribeHotplug } from "./ipc/events";
 
 const border = "1px solid var(--mantine-color-dark-4)";
 
 export default function App() {
   const refreshDevices = useStore((s) => s.refreshDevices);
+  const deviceAttached = useStore((s) => s.deviceAttached);
+  const deviceDetached = useStore((s) => s.deviceDetached);
   const status = useStore((s) => s.status);
 
   useEffect(() => {
     void refreshDevices();
   }, [refreshDevices]);
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    void subscribeHotplug(deviceAttached, deviceDetached).then((un) => {
+      cleanup = un;
+    });
+    return () => cleanup?.();
+  }, [deviceAttached, deviceDetached]);
 
   return (
     <Box style={{ display: "grid", gridTemplateRows: "auto 1fr auto", height: "100vh" }}>
