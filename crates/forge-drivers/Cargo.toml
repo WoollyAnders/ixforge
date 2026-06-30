@@ -1,0 +1,22 @@
+[package]
+name = "forge-drivers"
+description = "IX Forge — per-controller-family protocol drivers (sinowealth, ...)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# MockTransport for golden-byte tests; no real HID backend needed.
+forge-transport = { path = "../forge-transport", default-features = false }
+
+[features]
+default = ["sinowealth", "sonix"]
+sinowealth = []
+sonix = []

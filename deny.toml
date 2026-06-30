@@ -1,0 +1,36 @@
+# cargo-deny — the automated clean-room / permissive-only guardrail.
+# Run with: cargo deny check
+#
+# Any dependency whose license is not in `allow` below fails CI. GPL/LGPL/AGPL and
+# other copyleft licenses are intentionally absent, so they cannot enter the tree.
+
+[licenses]
+# SPDX identifiers we accept. All permissive.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+# Per-crate exceptions go here if a transitive dep needs a one-off allowance.
+exceptions = []
+
+[bans]
+# Surface accidental duplicate versions; not fatal.
+multiple-versions = "warn"
+wildcards = "warn"
+
+[advisories]
+# Fail on known-vulnerable or yanked crates.
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

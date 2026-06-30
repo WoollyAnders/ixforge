@@ -1,0 +1,16 @@
+[package]
+name = "forge-registry"
+description = "IX Forge — device enumeration, profile/driver matching, and session opening."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+# Only the backend-agnostic types (DeviceInfo, HidBackend) are needed here; the
+# concrete hidapi backend is enabled by the app, not the matching logic.
+forge-transport = { path = "../forge-transport", default-features = false }
+forge-drivers = { path = "../forge-drivers" }
+forge-profiles = { path = "../forge-profiles" }

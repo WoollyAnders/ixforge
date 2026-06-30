@@ -1,0 +1,76 @@
+# IX Forge device profile — AULA F108 Pro
+#
+# ⚠️ TEMPLATE / PLACEHOLDER. Every value marked TODO must be filled in from YOUR
+# OWN USB capture of the official software (see docs/protocols/aula-f108-pro.md).
+#
+# IMPORTANT: the F108 Pro is tri-mode (BT / 2.4GHz / USB-C) but its official
+# software is Windows + WIRED-ONLY. Capture and configure over USB-C wired.
+
+schema_version = 1
+id = "aula.f108-pro"
+display_name = "AULA F108 Pro"
+vendor = "AULA"
+
+[matcher]
+# 0x0C45 == Sonix Technology (NOT SinoWealth, despite the AULA brand). Confirm
+# from your capture / Device Manager. The board exposes several HID interfaces;
+# add usage_page (and/or interface) once you see which one carries config traffic.
+vid = 0x0c45
+pid = 0x800a          # TODO confirm in wired mode
+# usage_page = 0xff00 # TODO — pin the vendor config interface to avoid matching
+# usage = 0x0001      #        the keyboard/consumer interfaces too
+# interface = 3       # TODO (Windows reported iface 3, sometimes 0/-1)
+
+[driver]
+family = "sonix"
+
+# RGB framing knobs consumed by the Sonix driver. All PLACEHOLDER until decoded.
+[driver.variant]
+report_id = 0x00        # TODO from capture
+packet_size = 64        # TODO total report length incl. report id
+set_frame_opcode = 0x00 # TODO
+color_order = "RGB"     # TODO — confirm channel order
+
+[provenance]
+captured_by = ""        # your name / handle
+captured_on = ""        # YYYY-MM-DD
+firmware_revision = ""
+capture_files = []      # e.g. ["captures/aula-f108-pro/02-esc-red.pcapng"]
+notes = "TEMPLATE — Sonix controller (VID 0x0c45) inferred; not yet verified against hardware. Wired-mode capture only."
+
+# --- RGB: 104 per-key LEDs ---------------------------------------------------
+[[capabilities]]
+kind = "rgb"
+mode = "per_key"
+max_brightness = 255
+color_order = "RGB"
+
+[capabilities.layout]
+# x/y in key units (1.0 == one key); w/h default to 1.0. led_index = position in
+# the device LED buffer — derive from your capture. TODO: complete all 104 keys.
+matrix_size = [6, 21]
+keys = [
+    { id = "KC_ESC", label = "Esc", x = 0.0, y = 0.0, led_index = 0 },
+    { id = "KC_F1", label = "F1", x = 2.0, y = 0.0, led_index = 1 },
+    { id = "KC_F2", label = "F2", x = 3.0, y = 0.0, led_index = 2 },
+    { id = "KC_GRV", label = "`", x = 0.0, y = 1.0, led_index = 21 },
+    { id = "KC_1", label = "1", x = 1.0, y = 1.0, led_index = 22 },
+    # ... TODO: remaining keys, including the numpad
+]
+
+# --- Macros: on-device storage ----------------------------------------------
+[[capabilities]]
+kind = "macro"
+storage = { mode = "on_device", slots = 0 } # TODO real slot count from software
+
+# --- LCD: 1.14" TFT ----------------------------------------------------------
+[[capabilities]]
+kind = "lcd"
+# 1.14" panels are commonly 240x135 (ST7789). Confirm resolution/orientation.
+width = 240   # TODO
+height = 135  # TODO
+format = "rgb565" # TODO
+features = { image = true, text = true, gif = true, system_monitor = true } # TODO
+
+# NOTE: the multifunction knob (volume / mode / lighting) is not yet modeled as a
+# capability. Plan it as a future capability variant once the protocol is known.

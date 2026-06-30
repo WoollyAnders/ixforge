@@ -1,0 +1,26 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+
+# Node / front end
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+
+# Tauri build output
+app/src-tauri/target
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.log
+
+# USB captures are large and provenance-sensitive. Track deliberately (git-lfs)
+# rather than by accident. Protocol *notes* (docs/protocols/*.md) ARE committed.
+/captures/*.pcap
+/captures/*.pcapng

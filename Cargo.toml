@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/forge-core",
+    "crates/forge-transport",
+    "crates/forge-profiles",
+    "crates/forge-drivers",
+    "crates/forge-registry",
+    "crates/forge-macro",
+]
+# `forge-app` (the Tauri binary) is added during front-end scaffolding. It pulls
+# platform webview libraries and is built on the target OS, not in the library
+# test job, so it is intentionally absent here for now.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/WoollyAnders/ixforge"
+authors = ["IX Forge contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+hidapi = "2"
+enigo = "0.2"

@@ -1,0 +1,18 @@
+[package]
+name = "forge-macro"
+description = "IX Forge — macro program model and host-side replay engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+enigo = { workspace = true, optional = true }
+
+[features]
+default = []
+# Host-side macro replay (injects input on the OS). Pulls platform input deps;
+# off by default so the macro AST stays testable without them.
+host-playback = ["dep:enigo"]

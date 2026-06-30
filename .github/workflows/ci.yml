@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust — lib crates (hardware-free)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      # The hardware-free crates: no hidapi (C lib), no platform input deps.
+      - name: Clippy (-D warnings)
+        run: >
+          cargo clippy
+          -p forge-core -p forge-profiles -p forge-drivers -p forge-registry -p forge-macro
+          --all-targets -- -D warnings
+
+      - name: Test
+        run: |
+          cargo test -p forge-core -p forge-profiles -p forge-drivers -p forge-registry -p forge-macro
+          cargo test -p forge-transport --no-default-features
+
+  deny:
+    name: License policy (clean-room guardrail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources
+
+  # Added when forge-app + the React front end land. Builds the full Tauri app and
+  # installer on Windows (the primary target) and verifies hidapi compiles.
+  #
+  # app-windows:
+  #   name: Build app (Windows)
+  #   runs-on: windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: dtolnay/rust-toolchain@stable
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: 20 }
+  #     - run: corepack enable
+  #     - run: pnpm install --frozen-lockfile
+  #     - run: pnpm tauri build

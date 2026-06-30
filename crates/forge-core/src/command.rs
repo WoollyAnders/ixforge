@@ -1,0 +1,99 @@
+//! Device-agnostic command intents.
+//!
+//! These are what the app sends to a [`crate::driver::DeviceSession`]; the driver
+//! turns them into device-specific bytes. They are deliberately free of any
+//! protocol detail.
+
+use serde::{Deserialize, Serialize};
+
+use crate::color::Color;
+use crate::ids::{KeyId, ZoneId};
+
+/// An RGB lighting intent.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RgbCommand {
+    /// Set every LED to one color.
+    SetAll(Color),
+    /// Set specific keys (per-key boards).
+    SetKeys(Vec<(KeyId, Color)>),
+    /// Set a whole zone (zoned boards).
+    SetZone { zone: ZoneId, color: Color },
+    /// Set the entire LED buffer at once, in `led_index` order.
+    SetFrame(Vec<Color>),
+}
+
+/// Select and configure a built-in on-device effect.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EffectSelection {
+    pub effect_id: String,
+    #[serde(default)]
+    pub speed: Option<u8>,
+    #[serde(default)]
+    pub brightness: Option<u8>,
+    #[serde(default)]
+    pub colors: Vec<Color>,
+}
+
+/// A macro program: an ordered list of input events plus a repeat policy.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MacroProgram {
+    pub events: Vec<MacroEvent>,
+    #[serde(default)]
+    pub repeat: MacroRepeat,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum MacroEvent {
+    /// HID usage code press.
+    KeyDown {
+        code: u16,
+    },
+    KeyUp {
+        code: u16,
+    },
+    /// Pause, in milliseconds.
+    Delay {
+        ms: u32,
+    },
+    /// Typed text (expanded to key events by the engine/driver).
+    Text {
+        text: String,
+    },
+    MouseButton {
+        button: u8,
+        down: bool,
+    },
+    MouseMove {
+        dx: i16,
+        dy: i16,
+    },
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroRepeat {
+    #[default]
+    Once,
+    Count(u16),
+    UntilKeyPress,
+    WhileHeld,
+}
+
+/// One LCD frame already encoded in the device's native pixel format.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LcdFrame {
+    pub width: u16,
+    pub height: u16,
+    pub data: Vec<u8>,
+}
+
+/// State read back from a device (only on devices that support readback).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DeviceState {
+    #[serde(default)]
+    pub firmware_version: Option<String>,
+    #[serde(default)]
+    pub current_profile: Option<String>,
+}
