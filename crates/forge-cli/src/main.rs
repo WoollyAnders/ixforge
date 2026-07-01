@@ -198,7 +198,7 @@ fn probe(
     println!(
         "Probing led_index {from}..={to} on {}.\n\
          For each index: the key lights for ~{:.0}s, then type the key name and press Enter.\n\
-         Just press Enter (blank) if nothing lit (a gap). Type 'q' + Enter to stop early.\n\
+         Just press Enter (blank) if nothing lit (a gap). Type 'quit' + Enter to stop early.\n\
          Answers are saved to {out_path}.\n",
         dev.profile.display_name,
         dwell.max(1.0) * 2.5,
@@ -223,7 +223,7 @@ fn probe(
         let mut line = String::new();
         stdin.lock().read_line(&mut line).map_err(|e| e.to_string())?;
         let label = line.trim();
-        if label.eq_ignore_ascii_case("q") {
+        if label.eq_ignore_ascii_case("quit") {
             println!("Stopped at 0x{idx:02x}.");
             break;
         }
@@ -283,7 +283,7 @@ USAGE:
 
   probe: interactively map keys — lights one LED index at a time (from..=to, hex
          ok e.g. 0x1f), waits for you to type the key that lit, saves to
-         keymap-probe.txt. Enter=gap, 'q'=stop.
+         keymap-probe.txt. Enter=gap, 'quit'=stop.
 
   --hold <secs>: keep re-streaming the frame for ~<secs> so the color locks and
                  holds steadily (recommended for the AULA F108 Pro; try --hold 10).";
