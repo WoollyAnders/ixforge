@@ -130,29 +130,16 @@ fn apply(
 ) -> Result<(), String> {
     let drivers = forge_drivers::all_drivers();
     let mut session = open_matched(backend, dev, &drivers).map_err(|e| e.to_string())?;
-    match hold {
-        // Keep re-streaming for ~`secs` so the color locks and holds steadily
-        // (the board redraws its onboard profile otherwise). Watch the board.
-        Some(secs) => {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(secs);
-            let mut n = 0u32;
-            while std::time::Instant::now() < deadline {
-                session.apply_rgb(&cmd).map_err(|e| e.to_string())?;
-                n += 1;
-            }
-            println!(
-                "ok: {} ({}) — streamed {n}× over ~{secs:.0}s",
-                dev.profile.display_name, dev.profile.driver.family
-            );
-        }
-        None => {
-            session.apply_rgb(&cmd).map_err(|e| e.to_string())?;
-            println!(
-                "ok: {} ({})",
-                dev.profile.display_name, dev.profile.driver.family
-            );
-        }
-    }
+    // The driver streams the frame continuously on a background thread, so just
+    // set it and keep the session alive; the board holds the color afterward
+    // until a keypress. `--hold` extends how long we keep streaming.
+    session.apply_rgb(&cmd).map_err(|e| e.to_string())?;
+    let secs = hold.unwrap_or(2.0);
+    std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+    println!(
+        "ok: {} ({}) — streamed ~{secs:.0}s",
+        dev.profile.display_name, dev.profile.driver.family
+    );
     Ok(())
 }
 
@@ -197,27 +184,26 @@ fn probe(
 
     println!(
         "Probing led_index {from}..={to} on {}.\n\
-         For each index: the key lights for ~{:.0}s, then type the key name and press Enter.\n\
+         For each index the key lights and STAYS lit (the driver streams it in the\n\
+         background) while you type the key name and press Enter.\n\
          Just press Enter (blank) if nothing lit (a gap). Type 'quit' + Enter to stop early.\n\
          Answers are saved to {out_path}.\n",
         dev.profile.display_name,
-        dwell.max(1.0) * 2.5,
     );
 
-    let reps = dwell.max(1.0).round() as u32;
+    // Brief settle time so the first frame reaches the board before we prompt.
+    let settle = std::time::Duration::from_secs_f64(dwell.clamp(0.4, 2.0) * 0.5);
     let stdin = std::io::stdin();
     for idx in from..=to {
         let mut frame = vec![Color::BLACK; 128];
         if (idx as usize) < frame.len() {
             frame[idx as usize] = color;
         }
-        // Light it so you can see which key it is...
-        for _ in 0..reps {
-            session
-                .apply_rgb(&RgbCommand::SetFrame(frame.clone()))
-                .map_err(|e| e.to_string())?;
-        }
-        // ...then ask (typing now is fine — you've already seen the key).
+        // Swap in the single-index frame; the worker keeps it lit continuously.
+        session
+            .apply_rgb(&RgbCommand::SetFrame(frame))
+            .map_err(|e| e.to_string())?;
+        std::thread::sleep(settle);
         print!("led_index {idx} (0x{idx:02x}) — which key lit? ");
         std::io::stdout().flush().ok();
         let mut line = String::new();

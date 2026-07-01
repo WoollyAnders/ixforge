@@ -10,17 +10,21 @@
 //!
 //! Lighting uses the **effect / live-display path** (`04 20`): a full frame is
 //! the effect preamble + 7 dense `[led_index, R, G, B]` data reports (color
-//! order **RGB**) + an all-zero terminator. **Streaming this frame repeatedly
-//! holds a stable color** — a single frame doesn't reliably win the panel from
-//! the board's onboard profile, so [`SonixSession::apply_rgb`] streams the frame
-//! [`STREAM_REPEATS`] times to lock software-display mode. (A running app should
-//! keep re-streaming on a background loop; a keypress makes the board redraw its
-//! saved onboard profile.)
+//! order **RGB**) + an all-zero terminator. The board holds the last streamed
+//! frame only until a keypress (then it redraws its saved onboard profile), so
+//! the session runs a **background thread that continuously re-streams** the
+//! current frame. [`SonixSession::apply_rgb`] just swaps that frame in and
+//! returns immediately; the worker keeps the color asserted.
 //!
 //! The `04 13`/`04 23` "static" path writes the onboard profile and needs a
 //! save/commit that isn't captured yet — that's the future "save color to
 //! keyboard" (persist-after-close) feature. Effects, macros, and the LCD are
 //! also not yet decoded → those methods return `NotSupported`.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use forge_core::{
     Capability, Color, DeviceProfile, DeviceSession, Driver, ForgeError, HidTransport, LedLayout,
@@ -32,10 +36,6 @@ use crate::framing::{resolve_zone_keys, rgb_layout};
 const REPORT_ID: u8 = 0x00;
 const REPORT_LEN: usize = 64;
 const SLOTS: usize = 128; // color buffer is indexed by led_index (== frame slot)
-
-/// How many times `apply_rgb` streams the frame to lock software-display mode.
-/// One frame doesn't reliably override the onboard profile; a handful does.
-const STREAM_REPEATS: usize = 6;
 
 /// Which LED index occupies each frame slot (`0` = no LED). For real LEDs the
 /// stored byte equals the slot position, so the color buffer can be indexed by
@@ -120,11 +120,82 @@ fn encode_effect_frame(buffer: &[Color; SLOTS]) -> [[u8; REPORT_LEN]; 7] {
 }
 
 /// Pace between reports. The device drains control transfers slowly (~33 ms in
-/// the capture); streaming faster desyncs the frame. No-op under `cfg(test)` so
-/// the mock-backed tests don't sleep.
+/// the capture); streaming faster desyncs the frame. No-op under `cfg(test)`.
 fn pace() {
     #[cfg(not(test))]
-    std::thread::sleep(std::time::Duration::from_millis(33));
+    thread::sleep(Duration::from_millis(33));
+}
+
+/// Gap between full re-streamed frames. Small: after a keypress makes the board
+/// redraw its onboard profile, the next frame re-asserts our colors within one
+/// cycle. Also bounds the worker loop under `cfg(test)`.
+const FRAME_GAP: Duration = Duration::from_millis(8);
+
+/// Send one 64-byte payload as a Feature report (report ID 0 prefixed), + pace.
+fn send(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(), ForgeError> {
+    let mut buf = [0u8; REPORT_LEN + 1];
+    buf[0] = REPORT_ID;
+    buf[1..].copy_from_slice(payload);
+    t.send_feature_report(&buf)?;
+    pace();
+    Ok(())
+}
+
+/// Drain the device's ACK after a control report (the lock-step handshake).
+/// Best-effort: the bytes aren't needed and a read hiccup must not abort, but
+/// skipping it entirely would stall the control pipe on hardware.
+fn ack(t: &mut dyn HidTransport) {
+    let mut buf = [0u8; REPORT_LEN + 1];
+    buf[0] = REPORT_ID;
+    let _ = t.get_feature_report(&mut buf);
+    pace();
+}
+
+/// One-time connect handshake.
+fn connect(t: &mut dyn HidTransport) -> Result<(), ForgeError> {
+    for rep in connect_reports() {
+        send(t, &rep)?;
+        ack(t);
+    }
+    Ok(())
+}
+
+/// Stream one effect frame: preamble (+ACK), 7 data reports, terminator, and
+/// heartbeats, matching the captured cadence.
+fn stream_once(t: &mut dyn HidTransport, frame: &[[u8; REPORT_LEN]; 7]) -> Result<(), ForgeError> {
+    send(t, &effect_preamble())?;
+    ack(t);
+    for rep in frame {
+        send(t, rep)?;
+    }
+    send(t, &report(&[]))?; // all-zero terminator
+    send(t, &heartbeat())?;
+    ack(t);
+    send(t, &heartbeat())?;
+    Ok(())
+}
+
+/// State shared between the session handle and its streaming worker.
+struct Shared {
+    frame: Mutex<[Color; SLOTS]>,
+    running: AtomicBool,
+}
+
+/// The worker: connect once, then re-stream the current frame until stopped.
+fn stream_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
+    if connect(transport.as_mut()).is_err() {
+        return;
+    }
+    while shared.running.load(Ordering::Relaxed) {
+        let frame = {
+            let buf = shared.frame.lock().unwrap_or_else(|e| e.into_inner());
+            encode_effect_frame(&buf)
+        };
+        if stream_once(transport.as_mut(), &frame).is_err() {
+            break;
+        }
+        thread::sleep(FRAME_GAP);
+    }
 }
 
 /// Stateless driver for the Sonix family.
@@ -145,69 +216,29 @@ impl Driver for SonixDriver {
                 "sonix driver requires an rgb capability with a layout".into(),
             )
         })?;
+        let shared = Arc::new(Shared {
+            frame: Mutex::new([Color::BLACK; SLOTS]),
+            running: AtomicBool::new(true),
+        });
+        let worker = shared.clone();
+        let handle = thread::spawn(move || stream_loop(transport, worker));
         Ok(Box::new(SonixSession {
             capabilities: profile.capabilities.clone(),
-            transport,
             layout,
-            connected: false,
+            shared,
+            handle: Some(handle),
         }))
     }
 }
 
 struct SonixSession {
     capabilities: Vec<Capability>,
-    transport: Box<dyn HidTransport>,
     layout: LedLayout,
-    connected: bool,
+    shared: Arc<Shared>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl SonixSession {
-    /// Send one 64-byte payload as a Feature report (report ID 0 prefixed), then
-    /// pace.
-    fn send(&mut self, payload: &[u8; REPORT_LEN]) -> Result<(), ForgeError> {
-        let mut buf = [0u8; REPORT_LEN + 1];
-        buf[0] = REPORT_ID;
-        buf[1..].copy_from_slice(payload);
-        self.transport.send_feature_report(&buf)?;
-        pace();
-        Ok(())
-    }
-
-    /// Drain the device's ACK after a control report (the lock-step handshake).
-    /// Best-effort: the bytes aren't needed, and a read hiccup must not abort an
-    /// apply, but skipping it entirely would stall the control pipe on hardware.
-    fn ack(&mut self) {
-        let mut buf = [0u8; REPORT_LEN + 1];
-        buf[0] = REPORT_ID;
-        let _ = self.transport.get_feature_report(&mut buf);
-        pace();
-    }
-
-    /// One-time connect handshake (safe to skip once done).
-    fn connect(&mut self) -> Result<(), ForgeError> {
-        for rep in connect_reports() {
-            self.send(&rep)?;
-            self.ack();
-        }
-        self.connected = true;
-        Ok(())
-    }
-
-    /// Stream one effect frame: preamble (+ACK), the 7 data reports, terminator,
-    /// and heartbeats matching the captured cadence.
-    fn stream_once(&mut self, frame: &[[u8; REPORT_LEN]; 7]) -> Result<(), ForgeError> {
-        self.send(&effect_preamble())?;
-        self.ack();
-        for rep in frame {
-            self.send(rep)?;
-        }
-        self.send(&report(&[]))?; // all-zero terminator
-        self.send(&heartbeat())?;
-        self.ack();
-        self.send(&heartbeat())?;
-        Ok(())
-    }
-
     /// Turn a command into the 128-entry LED buffer (indexed by led_index).
     fn buffer_from(&self, cmd: &RgbCommand) -> Result<[Color; SLOTS], ForgeError> {
         let mut buf = [Color::BLACK; SLOTS];
@@ -263,19 +294,20 @@ impl DeviceSession for SonixSession {
 
     fn apply_rgb(&mut self, cmd: &RgbCommand) -> Result<(), ForgeError> {
         let buffer = self.buffer_from(cmd)?;
-        let frame = encode_effect_frame(&buffer);
-        if !self.connected {
-            self.connect()?;
-        }
-        // Stream repeatedly to win the panel from the onboard profile and lock
-        // software-display mode.
-        for _ in 0..STREAM_REPEATS {
-            self.stream_once(&frame)?;
-        }
+        *self.shared.frame.lock().unwrap_or_else(|e| e.into_inner()) = buffer;
         Ok(())
     }
 
     // set_effect / write_macro / push_lcd default to NotSupported until decoded.
+}
+
+impl Drop for SonixSession {
+    fn drop(&mut self) {
+        self.shared.running.store(false, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -327,6 +359,35 @@ mod tests {
         assert_eq!(&r0[4..8], &[0x02, 0x00, 0x00, 0x00], "F1 stays off");
     }
 
+    #[test]
+    fn connect_emits_the_captured_handshake() {
+        let mut t = MockTransport::new();
+        connect(&mut t).unwrap();
+        let w = t.feature_writes();
+        assert_eq!(w.len(), 4);
+        assert!(w.iter().all(|r| r.len() == REPORT_LEN + 1 && r[0] == REPORT_ID));
+        assert_eq!((w[0][1], w[0][2]), (0x04, 0x18));
+        assert_eq!((w[1][1], w[1][2], w[1][9]), (0x04, 0x28, 0x01));
+        // config packet: payload starts 00 01 5a 1a … and ends …aa 55 (write is
+        // report-id-prefixed, so payload byte N is at write index N+1).
+        assert_eq!((w[2][2], w[2][3]), (0x01, 0x5a));
+        assert_eq!((w[2][63], w[2][64]), (0xaa, 0x55));
+        assert_eq!((w[3][1], w[3][2]), (0x04, 0x02));
+    }
+
+    #[test]
+    fn stream_once_emits_preamble_data_terminator() {
+        let mut t = MockTransport::new();
+        let mut buf = [Color::BLACK; SLOTS];
+        buf[1] = Color::RED;
+        stream_once(&mut t, &encode_effect_frame(&buf)).unwrap();
+        let w = t.feature_writes();
+        assert_eq!(w.len(), 1 + 7 + 1 + 2, "preamble + 7 data + terminator + 2 hb");
+        assert_eq!((w[0][1], w[0][2]), (0x04, 0x20), "effect preamble");
+        assert_eq!(&w[1][1..5], &[0x01, 0xff, 0x00, 0x00], "first data report = Esc red");
+        assert!(w[8][1..].iter().all(|&b| b == 0), "terminator is all-zero");
+    }
+
     fn esc_profile() -> DeviceProfile {
         DeviceProfile {
             schema_version: 1,
@@ -367,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_rgb_connects_then_streams() {
+    fn worker_connects_then_streams_the_applied_frame() {
         let mock = MockTransport::new();
         let mut session = SonixDriver
             .open(&esc_profile(), Box::new(mock.clone()))
@@ -375,17 +436,19 @@ mod tests {
         session
             .apply_rgb(&RgbCommand::SetKeys(vec![(KeyId::from("KC_ESC"), Color::RED)]))
             .unwrap();
+        // Let the worker run a few frames, then stop it (Drop joins the thread).
+        thread::sleep(Duration::from_millis(60));
+        drop(session);
 
         let w = mock.feature_writes();
-        // Every write is report-id 0, 65 bytes.
-        assert!(w.iter().all(|r| r.len() == REPORT_LEN + 1 && r[0] == REPORT_ID));
-        // Connect handshake first: 04 18, then 04 28.
-        assert_eq!((w[0][1], w[0][2]), (0x04, 0x18), "connect starts with 04 18");
-        assert_eq!((w[1][1], w[1][2]), (0x04, 0x28), "then 04 28");
-        // 4 connect reports + STREAM_REPEATS × (preamble + 7 data + terminator + 2 hb).
-        let per_stream = 1 + 7 + 1 + 2;
-        assert_eq!(w.len(), 4 + STREAM_REPEATS * per_stream);
-        // The 5th write is the first stream's effect preamble (04 20).
-        assert_eq!((w[4][1], w[4][2]), (0x04, 0x20), "stream begins with 04 20");
+        // Connect handshake happened first.
+        assert_eq!((w[0][1], w[0][2]), (0x04, 0x18), "starts with connect 04 18");
+        // At least one effect preamble was streamed.
+        assert!(w.iter().any(|r| r[1] == 0x04 && r[2] == 0x20), "streamed a frame");
+        // At least one frame carried Esc red (idx 1 = ff0000).
+        assert!(
+            w.iter().any(|r| r[1] == 0x01 && r[2] == 0xff && r[3] == 0x00 && r[4] == 0x00),
+            "the applied Esc-red frame was streamed"
+        );
     }
 }
