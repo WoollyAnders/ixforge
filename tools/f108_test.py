@@ -98,8 +98,25 @@ def send(h, payload, label=""):
     return n
 
 
+# The app sends these constantly while it's running (keeps a "software" session).
+HEARTBEAT = [report([(0, 0x04), (1, 0x02)]), report([(0, 0x04), (1, 0xf5), (8, 0x09)])]
+
+
+def apply_once(h, buf):
+    results = []
+    for i, r in enumerate(PREAMBLE):
+        results.append(send(h, r, f"preamble[{i}]"))
+    for i, r in enumerate(frame(buf)):
+        results.append(send(h, r, f"data[{i}]"))
+    results.append(send(h, COMMIT, "commit"))
+    results.append(send(h, TRAILER, "trailer"))
+    return results
+
+
 def main():
-    mode = sys.argv[1] if len(sys.argv) > 1 else "esc-red"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    mode = args[0] if args else "esc-red"
+    hold = "--hold" in sys.argv
     if mode == "esc-red":
         buf = {1: (0xff, 0x00, 0x00)}
     elif mode == "all-red":
@@ -110,23 +127,30 @@ def main():
         sys.exit("mode must be: esc-red | all-red | off")
 
     h = open_device()
-    results = []
-    for i, r in enumerate(PREAMBLE):
-        results.append(send(h, r, f"preamble[{i}]"))
-    for i, r in enumerate(frame(buf)):
-        results.append(send(h, r, f"data[{i}]"))
-    results.append(send(h, COMMIT, "commit"))
-    results.append(send(h, TRAILER, "trailer"))
-    h.close()
-
+    results = apply_once(h, buf)
     ok = sum(1 for n in results if n and n > 0)
     print(f"\nSent '{mode}': {ok}/{len(results)} writes accepted (each should return 65).")
-    if ok == len(results):
-        print("All writes went through. If nothing lit, the app likely puts the")
-        print("device in a mode first — we'll capture that next.")
-    else:
-        print("Some writes were rejected — a Windows report-length issue. Paste the")
-        print("numbers above and I'll adjust the report size.")
+
+    if hold:
+        # Test the "software session" theory: keep the heartbeat alive and
+        # periodically re-apply the frame for ~12s. WATCH THE KEYBOARD.
+        print("Holding session ~12s (heartbeat + re-apply). WATCH THE KEYBOARD. Ctrl+C to stop.")
+        end = time.time() + 12
+        tick = 0
+        try:
+            while time.time() < end:
+                for hb in HEARTBEAT:
+                    send(h, hb)
+                tick += 1
+                if tick % 8 == 0:
+                    apply_once(h, buf)
+                time.sleep(0.05)
+        except KeyboardInterrupt:
+            pass
+
+    h.close()
+    if ok != len(results):
+        print("Some writes were rejected — a report-length issue; paste the numbers.")
 
 
 if __name__ == "__main__":
