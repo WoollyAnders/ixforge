@@ -18,6 +18,25 @@ use forge_transport::HidBackend;
 
 const PROFILES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../profiles/aula");
 
+/// The F108 Pro profile is embedded so a cross-compiled `.exe` is self-contained
+/// (copy one file to the target machine). On a dev checkout the on-disk `profiles/`
+/// tree is used instead; the embedded copy is the fallback.
+const F108_PROFILE_TOML: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../profiles/aula/f108-pro.toml"));
+
+/// Load the profile catalog: the on-disk tree (dev, or `--profiles <dir>`) if it
+/// has profiles, else the embedded F108 profile (portable standalone binary).
+fn load_catalog(profiles_dir: Option<&String>) -> Result<ProfileCatalog, String> {
+    let dir = profiles_dir.map(String::as_str).unwrap_or(PROFILES_DIR);
+    if let Ok(catalog) = ProfileCatalog::from_dir(dir) {
+        if !catalog.profiles().is_empty() {
+            return Ok(catalog);
+        }
+    }
+    let profile = forge_profiles::parse_profile(F108_PROFILE_TOML).map_err(|e| e.to_string())?;
+    Ok(ProfileCatalog::from_profiles(vec![profile]))
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("error: {e}");
@@ -30,7 +49,7 @@ fn run() -> Result<(), String> {
     let command = args.get(1).map(String::as_str).unwrap_or("help");
     let opts = parse_opts(&args);
 
-    let catalog = ProfileCatalog::from_dir(PROFILES_DIR).map_err(|e| e.to_string())?;
+    let catalog = load_catalog(opts.get("profiles"))?;
     let backend = HidapiBackend::new().map_err(|e| e.to_string())?;
     let infos = backend.enumerate().map_err(|e| e.to_string())?;
     let matched = match_devices(infos, &catalog);
