@@ -132,15 +132,28 @@ confirmed: replug shows the last app-saved color). There are two distinct write 
    safe and in scope; it's how the app makes a color survive replug.
 
 **Driver model:** connect handshake → **stream frames via the `04 20` path in a background loop**
-(~33 ms) for live color/effects while the app is open. "Save color to keyboard" (persist after
-close) is a later feature gated on capturing the app's save/commit sequence.
-**Next capture needed (`05-…`):** app connecting to a board on its **saved profile** and changing
-the color, to reveal the mode-select / save-commit the live effect stream doesn't contain.
+(~33 ms) for live color/effects while the app is open. This is implemented and proven.
 
-**Still needed:** the full **key → led_index** map (only `Esc=0x01`, `W=0x4b` known so far).
-Fastest way to get it: single-key captures walking across the board, or one capture per row.
-For now the encoder can be built + golden-tested against these captures; per-key painting is
-correct for known keys and lands fully once the map is complete.
+### Persistence / "save to keyboard" — **PARTLY DECODED, OPEN** (from `05-…`)
+`05-persistence-capture` = the app on a board sitting on its saved (blue) profile, changed to
+solid red; red **survived unplug/replug**, so the app writes onboard memory. Findings:
+- The save uses **only the static `04 13`/`04 23` path** — no `04 20` effect frame at all — plus a
+  one-time setup packet `01 ff … 01 05 03 … aa 55` and two full static applies (current color, then
+  the new one). There is **no separate save/commit command**: the last write is just the apply's
+  `04 f0` trailer.
+- But the static apply is **ignored when replayed in isolation** (bare static apply → no display,
+  no persist; the board stays on its onboard color). The `01 05 03` setup packet, replayed alone,
+  puts the board into an **effect (radial rainbow)**, not a static color — so `05` there is likely
+  an effect index, not "static mode".
+- The session is **read-heavy**: 89 writes vs **263 `GET_REPORT` reads**. ⇒ the static save only
+  "takes" inside the app's live, continuously-polled session; reproducing it needs a **full-session
+  replay** (all reads + exact interleaving/timing), not a one-shot apply. **OPEN** — next experiment
+  is to replay `05` in its entirety (recoloring only the data reports) and confirm it persists.
+- Live display via the `04 20` effect stream is unaffected and already works.
+
+**Key → led_index map: DONE** — all 104 mapped empirically with `forge-cli probe` (see
+`profiles/aula/f108-pro.toml`). Note the earlier capture guess `W=0x4b` was wrong: **W=0x27**,
+`0x4b`=X.
 
 ### LCD (1.14" TFT)
 - Resolution / orientation / pixel format (RGB565?): *TODO*
