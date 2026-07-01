@@ -163,23 +163,27 @@ impl PlaceholderSession {
             .map(|p| p as u8)
             .ok_or_else(|| ForgeError::InvalidArgument(format!("unknown effect {effect_id:?}")))
     }
+}
 
-    /// The keys belonging to a lighting zone (for `RgbMode::Zoned` boards).
-    fn zone_keys(&self, zone: &ZoneId) -> Result<Vec<KeyId>, ForgeError> {
-        let zones = self.capabilities.iter().find_map(|c| match c {
-            Capability::Rgb(rgb) => match &rgb.mode {
-                RgbMode::Zoned { zones } => Some(zones),
-                _ => None,
-            },
+/// The keys belonging to a lighting zone (for `RgbMode::Zoned` boards). Shared by
+/// the placeholder session and the real drivers.
+pub(crate) fn resolve_zone_keys(
+    capabilities: &[Capability],
+    zone: &ZoneId,
+) -> Result<Vec<KeyId>, ForgeError> {
+    let zones = capabilities.iter().find_map(|c| match c {
+        Capability::Rgb(rgb) => match &rgb.mode {
+            RgbMode::Zoned { zones } => Some(zones),
             _ => None,
-        });
-        zones
-            .ok_or(ForgeError::NotSupported)?
-            .iter()
-            .find(|z| &z.id == zone)
-            .map(|z| z.keys.clone())
-            .ok_or_else(|| ForgeError::InvalidArgument(format!("unknown zone {zone:?}")))
-    }
+        },
+        _ => None,
+    });
+    zones
+        .ok_or(ForgeError::NotSupported)?
+        .iter()
+        .find(|z| &z.id == zone)
+        .map(|z| z.keys.clone())
+        .ok_or_else(|| ForgeError::InvalidArgument(format!("unknown zone {zone:?}")))
 }
 
 impl DeviceSession for PlaceholderSession {
@@ -192,8 +196,7 @@ impl DeviceSession for PlaceholderSession {
         let resolved;
         let cmd = match cmd {
             RgbCommand::SetZone { zone, color } => {
-                let pairs = self
-                    .zone_keys(zone)?
+                let pairs = resolve_zone_keys(&self.capabilities, zone)?
                     .into_iter()
                     .map(|k| (k, *color))
                     .collect();

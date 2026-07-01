@@ -12,32 +12,24 @@ display_name = "AULA F108 Pro"
 vendor = "AULA"
 
 [matcher]
-# 0x0C45 == Sonix Technology (NOT SinoWealth, despite the AULA brand). Confirm
-# from your capture / Device Manager. The board exposes several HID interfaces;
-# add usage_page (and/or interface) once you see which one carries config traffic.
+# 0x0C45 == Sonix Technology (NOT SinoWealth, despite the AULA brand).
+# Confirmed from capture: config traffic is on interface 3.
 vid = 0x0c45
-pid = 0x800a          # TODO confirm in wired mode
-# usage_page = 0xff00 # TODO — pin the vendor config interface to avoid matching
-# usage = 0x0001      #        the keyboard/consumer interfaces too
-# interface = 3       # TODO (Windows reported iface 3, sometimes 0/-1)
+pid = 0x800a
+interface = 3
 
 [driver]
+# The Sonix RGB protocol is DECODED and hardcoded in crates/forge-drivers/src/sonix
+# (SET_REPORT Feature, report id 0, 64-byte reports on interface 3; 8 reports of
+# 16× [led_index,R,G,B]). No variant knobs needed.
 family = "sonix"
 
-# RGB framing knobs consumed by the Sonix driver. All PLACEHOLDER until decoded.
-[driver.variant]
-report_id = 0x00         # TODO from capture
-packet_size = 64         # TODO total report length incl. report id
-set_frame_opcode = 0x00  # TODO
-set_effect_opcode = 0x02 # TODO — opcode that selects a built-in effect
-color_order = "RGB"      # TODO — confirm channel order
-
 [provenance]
-captured_by = ""        # your name / handle
-captured_on = ""        # YYYY-MM-DD
+captured_by = "WoollyAnders"
+captured_on = "2026-07-01"
 firmware_revision = ""
-capture_files = []      # e.g. ["captures/aula-f108-pro/02-esc-red.pcapng"]
-notes = "TEMPLATE — Sonix controller (VID 0x0c45) inferred; not yet verified against hardware. Wired-mode capture only."
+capture_files = ["captures/aula-f108-pro/03-… (esc red/green, W red, all red)"]
+notes = "Per-key RGB decoded from capture. led_index confirmed: Esc=1, W=0x4b; the rest are PROVISIONAL pending a full key→index map. Not yet verified on hardware."
 
 # --- RGB: 104 per-key LEDs ---------------------------------------------------
 [[capabilities]]
@@ -72,12 +64,15 @@ effects = [
 
 [capabilities.layout]
 # x/y/w/h in key units (1.0 == one key). Physical positions traced from the F108
-# Pro V3. The knob + LCD are chassis elements (UI), not keys. NOTE: led_index is
-# sequential/provisional here — the real LED-buffer order comes from your capture.
+# Pro V3. The knob + LCD are chassis elements (UI), not keys.
+# ⚠️ led_index = the device LED-buffer position (the driver sends [led_index,R,G,B]).
+# CONFIRMED from capture: KC_ESC=1, KC_R2_1 (W)=0x4b. All OTHER led_index values are
+# still PROVISIONAL (sequential) and will paint the wrong key until the full
+# key→index map is captured. "Fill all" is unaffected (lights every LED).
 matrix_size = [6, 22]
 keys = [
     # Function row
-    { id = "KC_ESC", label = "Esc", x = 0.0, y = 0.0, led_index = 0 },
+    { id = "KC_ESC", label = "Esc", x = 0.0, y = 0.0, led_index = 1 },
     { id = "KC_F1", label = "F1", x = 2.0, y = 0.0, led_index = 1 },
     { id = "KC_F2", label = "F2", x = 3.0, y = 0.0, led_index = 2 },
     { id = "KC_F3", label = "F3", x = 4.0, y = 0.0, led_index = 3 },
@@ -118,7 +113,7 @@ keys = [
     # QWERTY row
     { id = "KC_TAB", label = "Tab", x = 0.0, y = 2.0, w = 1.5, led_index = 37 },
     { id = "KC_R2_0", label = "Q", x = 1.5, y = 2.0, led_index = 38 },
-    { id = "KC_R2_1", label = "W", x = 2.5, y = 2.0, led_index = 39 },
+    { id = "KC_R2_1", label = "W", x = 2.5, y = 2.0, led_index = 75 }, # 0x4b, confirmed
     { id = "KC_R2_2", label = "E", x = 3.5, y = 2.0, led_index = 40 },
     { id = "KC_R2_3", label = "R", x = 4.5, y = 2.0, led_index = 41 },
     { id = "KC_R2_4", label = "T", x = 5.5, y = 2.0, led_index = 42 },

@@ -21,10 +21,11 @@ app/src-tauri/gen
 !.vscode/extensions.json
 *.log
 
-# USB captures are large and provenance-sensitive. Track deliberately (git-lfs)
-# rather than by accident. Protocol *notes* (docs/protocols/*.md) ARE committed.
-/captures/*.pcap
-/captures/*.pcapng
+# USB captures are large (often >100 MB) and provenance-sensitive — never commit
+# them (GitHub also rejects files >100 MB). Protocol *notes* (docs/protocols/*.md)
+# and the captures/ README ARE committed; the raw captures stay local.
+*.pcap
+*.pcapng
 
 # Device reference images are tracing inputs only — keep them LOCAL, never commit
 # third-party product photos (copyrighted). Put references here; commit the
