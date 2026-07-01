@@ -171,9 +171,10 @@ fn parse_int(s: &str) -> Option<u32> {
     }
 }
 
-/// Sweep LED indices `from..=to`, lighting one at a time so the operator can
-/// record which physical key each index drives (builds the key→led_index map).
-/// Indices with no LED simply stay dark — note those as gaps.
+/// Sweep LED indices `from..=to`, lighting one at a time and waiting for the
+/// operator to type the physical key that lit, to build the key→led_index map.
+/// Each answer is appended to `keymap-probe.txt` immediately so nothing is lost.
+/// Indices with no LED stay dark — press Enter (blank) to record them as gaps.
 fn probe(
     backend: &HidapiBackend,
     dev: &MatchedDevice<'_>,
@@ -182,28 +183,55 @@ fn probe(
     dwell: f64,
     color: Color,
 ) -> Result<(), String> {
+    use std::io::{BufRead, Write};
+
     let drivers = forge_drivers::all_drivers();
     let mut session = open_matched(backend, dev, &drivers).map_err(|e| e.to_string())?;
+
+    let out_path = "keymap-probe.txt";
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(out_path)
+        .map_err(|e| e.to_string())?;
+
     println!(
-        "Probing led_index {from}..={to} on {}. Watch the board; note the key that lights for each index.\n",
-        dev.profile.display_name
+        "Probing led_index {from}..={to} on {}.\n\
+         For each index: the key lights for ~{:.0}s, then type the key name and press Enter.\n\
+         Just press Enter (blank) if nothing lit (a gap). Type 'q' + Enter to stop early.\n\
+         Answers are saved to {out_path}.\n",
+        dev.profile.display_name,
+        dwell.max(1.0) * 2.5,
     );
-    // Each apply_rgb streams for ~2.5s (enough to see clearly); `dwell` sets how
-    // many streams per index for a longer look.
+
     let reps = dwell.max(1.0).round() as u32;
+    let stdin = std::io::stdin();
     for idx in from..=to {
         let mut frame = vec![Color::BLACK; 128];
         if (idx as usize) < frame.len() {
             frame[idx as usize] = color;
         }
-        println!("led_index {idx} (0x{idx:02x}) — which key is lit?");
+        // Light it so you can see which key it is...
         for _ in 0..reps {
             session
                 .apply_rgb(&RgbCommand::SetFrame(frame.clone()))
                 .map_err(|e| e.to_string())?;
         }
+        // ...then ask (typing now is fine — you've already seen the key).
+        print!("led_index {idx} (0x{idx:02x}) — which key lit? ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        stdin.lock().read_line(&mut line).map_err(|e| e.to_string())?;
+        let label = line.trim();
+        if label.eq_ignore_ascii_case("q") {
+            println!("Stopped at 0x{idx:02x}.");
+            break;
+        }
+        let record = if label.is_empty() { "(gap)" } else { label };
+        writeln!(file, "{idx}\t0x{idx:02x}\t{record}").map_err(|e| e.to_string())?;
+        file.flush().ok();
     }
-    println!("\nProbe done ({from}..={to}). Send me the index→key list and I'll build the profile.");
+    println!("\nSaved to {out_path}. Send me that file's contents and I'll build the profile.");
     Ok(())
 }
 
@@ -253,7 +281,9 @@ USAGE:
   forge-cli probe [--from <n>] [--to <n>] [--dwell <secs>] [--color <rrggbb>] [--device <id>]
   forge-cli effect --name <id> [--speed 1-5] [--brightness 1-5] [--color <rrggbb>] [--device <id>]
 
-  probe: light one LED index at a time (from..=to, hex ok e.g. 0x1f) to map keys.
+  probe: interactively map keys — lights one LED index at a time (from..=to, hex
+         ok e.g. 0x1f), waits for you to type the key that lit, saves to
+         keymap-probe.txt. Enter=gap, 'q'=stop.
 
   --hold <secs>: keep re-streaming the frame for ~<secs> so the color locks and
                  holds steadily (recommended for the AULA F108 Pro; try --hold 10).";
