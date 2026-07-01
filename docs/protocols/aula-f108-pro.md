@@ -30,7 +30,8 @@ Plug in by cable, confirm the app sees the keyboard, then capture.
 - Date: 2026-07-01
 - Official software version: *TODO*
 - Capture files: `captures/aula-f108-pro/02-…` (idle/handshake), `03-…` (Esc→red, Esc→green,
-  W→red, all→red) — local only, git-ignored.
+  W→red, all→red), `04-connect-esc-red…` (**fresh app connect** + Esc red/green — contains the
+  one-time init + the command/ACK handshake missing from 02/03) — local only, git-ignored.
 
 ## Capture log
 
@@ -74,6 +75,67 @@ One variable per capture:
   9. `04 f0 …`
 - **Checksum:** none evident (color bytes change with nothing else moving).
 - **Idle heartbeat (ignore):** app alternates `04 02 …` / `04 f5 …[byte8]=09` while idle.
+
+### Command/ACK handshake — **DECODED** (from `04-connect-esc-red.pcapng`)
+This is the piece that was missing when writes were "accepted" but nothing lit.
+
+- **Every control command is followed by a device READ.** After each `04 xx` / `80`
+  control write the app issues a **`GET_REPORT`** (`bmRequestType 0xa1`, `bRequest 0x01`,
+  `wValue 0x0300` Feature/ID 0, `wIndex 3`, `wLength 64`) to drain the device's ACK. The
+  **8 data reports stream with no reads**; there is **one read after the commit**. `04 f0`
+  gets no read. (Capture 04: 139 reads interleaved among 565 writes.)
+  → If you only write and never read, every `SET_REPORT` still succeeds at the USB layer
+  ("16/16 accepted") but the firmware's command parser desyncs and the frame never latches
+  → **nothing lights.** Reading the ACK after each control command is the fix.
+- **One-time connect handshake** (app startup, before any frame; capture frames 1095–1151):
+  1. `04 18 …`                                   → read ACK
+  2. `04 28 …[byte8]=01`                          → read ACK
+  3. `00 01 5a 1a 07 01 08 26 09 00 03 … [62..63]=aa 55`  (config packet, committed) → read ACK
+  4. `04 02 …` (heartbeat)                        → read ACK
+- **Captures 02/03 lacked this** because they started mid-session (after the app had already
+  connected), which is why the replayed per-apply sequence alone didn't light the board.
+
+### LED-matrix warmup — **DECODED / PROVEN ON HARDWARE** (from `04-…`)
+The connect handshake + a byte-perfect static apply (matching commands, data, timing, and even
+the device's ACK bytes) still left the board **dark**. The one remaining difference: right after
+connect the app streams its default **effect** for ~1.5 s — repeated `04 20 …[byte8]=08` frames,
+each a **densely-packed** `[led_index,R,G,B]` list (all real LEDs, 16/report, ~7 reports, no
+INDEX_MAP gaps) — *before* the first static apply. Replaying the exact capture opening
+(connect → effect stream → static apply) **lit the board** (rainbow, then solid red). ⇒ streaming
+frames performs an implicit **LED-matrix power-on** that persists; static applies only display on
+an already-powered matrix. After warmup, static applies work with only heartbeats between them
+(no further effect frames — capture has 6 static latches spanning frames 3297–7245 with none).
+- **Effect frame framing:** `04 20 …[byte8]=08`, then dense `[idx,R,G,B]×16` data reports, then an
+  all-zero report; same command/ACK read cadence and ~33 ms pacing as the static path.
+- **Open cadence detail:** the app paces **every** report (writes, reads, and each data report)
+  ~33–36 ms apart; streaming faster than the device drains → frame never renders.
+- **TODO (minimize):** find the smallest warmup that powers the matrix (1 effect frame? bare
+  `04 20`?) so the driver need not flash a full rainbow on connect.
+
+### TWO LIGHTING PATHS — **DECODED / PROVEN ON HARDWARE**
+The board has an **onboard saved profile** (survives unplug/replug with no software running —
+confirmed: replug shows the last app-saved color). There are two distinct write paths:
+
+1. **Effect / live-display path (`04 20`)** — **this is how software drives the LEDs live.**
+   `04 20 …[byte8]=08` + a **dense** `[led_index,R,G,B]×16` stream (all real LEDs, ~7 reports,
+   then an all-zero terminator), each report ~33 ms apart with the command/ACK read cadence.
+   **Streaming these continuously holds a stable, clean color** (proven: `tools/f108_effect.py`
+   streamed solid red indefinitely). Records are self-describing by index, so packing order is
+   free. The last streamed frame **persists after streaming stops until a keypress**, which makes
+   the onboard controller redraw its saved profile → so robust display requires **continuous
+   re-streaming** (a background loop), exactly as the official app does while open.
+2. **Static / onboard-write path (`04 13`/`04 23`)** — the sequence decoded first. On a board
+   already in software-display mode (e.g. after effect streaming) it displays; but on a fresh
+   board sitting on its saved profile it is **ignored** (writes ACK fine, panel never changes,
+   reverts to the saved color). ⇒ this path writes the onboard profile and needs a **save/commit**
+   step (not yet captured) to take effect + persist. This is a **config write, not firmware** —
+   safe and in scope; it's how the app makes a color survive replug.
+
+**Driver model:** connect handshake → **stream frames via the `04 20` path in a background loop**
+(~33 ms) for live color/effects while the app is open. "Save color to keyboard" (persist after
+close) is a later feature gated on capturing the app's save/commit sequence.
+**Next capture needed (`05-…`):** app connecting to a board on its **saved profile** and changing
+the color, to reveal the mode-select / save-commit the live effect stream doesn't contain.
 
 **Still needed:** the full **key → led_index** map (only `Esc=0x01`, `W=0x4b` known so far).
 Fastest way to get it: single-key captures walking across the board, or one capture per row.

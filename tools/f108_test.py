@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
-"""Quick on-hardware check for the AULA F108 Pro (Sonix) RGB protocol.
+"""On-hardware check for the AULA F108 Pro (Sonix) RGB protocol.
 
-This replays the exact byte sequence IX Forge's `sonix` driver produces (decoded
-from the owner's USB capture) so you can confirm the protocol lights the real
-keyboard without building the Rust app.
+Replays the exact byte sequence the official AULA app uses, decoded from the
+owner's USB capture (`captures/aula-f108-pro/04-connect-esc-red.pcapng`), so you
+can confirm the protocol lights the real keyboard without building the Rust app.
+
+Key finding from capture 04: this is a **command/ACK handshake**. Every control
+command (the `04 xx` / `80` reports) is a Feature SET_REPORT that the app FOLLOWS
+with a Feature GET_REPORT (read) to drain the device's ACK. The 8 data reports
+stream without reads; there's one read after the commit. If you only ever write
+(as an earlier version did), the device accepts every SET_REPORT at the USB layer
+("16/16 accepted") but its command parser desyncs and the frame never latches —
+so nothing lights. Reading the ACK after each control command is the fix.
+
+There is also a one-time connect handshake (`04 28`, a config packet ending in
+`aa 55`) the app sends before any frame; we replay it in init_session().
 
 Setup (native Windows, or Linux with HID access):
     pip install hid          # cython-hidapi
@@ -11,12 +22,25 @@ Run with the keyboard WIRED and the official AULA app CLOSED:
     python tools/f108_test.py esc-red     # Esc -> red
     python tools/f108_test.py all-red     # whole board -> red
     python tools/f108_test.py off         # all off
+    python tools/f108_test.py esc-red --hold   # hold session ~12s, watch board
+    python tools/f108_test.py esc-red --quiet  # suppress per-report logging
 """
 import sys
 import time
 import hid
 
 VID, PID, IFACE = 0x0C45, 0x800A, 3
+# Windows HidD_GetFeature needs the buffer sized to the device's FULL feature
+# report length. Our writes are 65 bytes (report-id byte + 64 data) and succeed,
+# so the report length is 65 — read the same size or HidD_GetFeature errors.
+READ_LEN = 65
+# The official app paces EVERY report ~36 ms apart (writes, reads, and each of
+# the 8 data reports). This device completes each control transfer slowly; if we
+# stream reports faster it can't keep up and the frame never renders (board stays
+# dark though every write "succeeds"). Match the cadence.
+TICK = 0.033
+
+VERBOSE = True
 
 # Which led_index sits in each of the 128 frame slots (0 = no LED). From capture.
 INDEX_MAP = [
@@ -38,20 +62,26 @@ def report(pairs):
     return r
 
 
-PREAMBLE = [
-    report([(0, 0x04), (1, 0x18)]),
-    report([(0, 0x04), (1, 0x13), (8, 0x01)]),
-    report([(0, 0x80), (9, 0x05), (14, 0xaa), (15, 0x55)]),
-    report([(0, 0x04), (1, 0xf0)]),
-    report([(0, 0x04), (1, 0x18)]),
-    report([(0, 0x04), (1, 0x23), (8, 0x09)]),
-]
+# --- One-time connect handshake (capture frames 1095-1151) ---------------
+# Config packet the app sends right after 04 28; committed with aa 55.
+CONFIG = report([
+    (1, 0x01), (2, 0x5a), (3, 0x1a), (4, 0x07), (5, 0x01),
+    (6, 0x08), (7, 0x26), (8, 0x09), (10, 0x03), (62, 0xaa), (63, 0x55),
+])
+
+# --- Per-apply control preamble / commit / trailer (capture ~frame 3195) --
+PRE_ATTN = report([(0, 0x04), (1, 0x18)])       # "attention"
+PRE_MODE = report([(0, 0x04), (1, 0x13), (8, 0x01)])
+PRE_80 = report([(0, 0x80), (9, 0x05), (14, 0xaa), (15, 0x55)])
+PRE_F0 = report([(0, 0x04), (1, 0xf0)])         # no ACK read follows this one
+PRE_LATCH = report([(0, 0x04), (1, 0x23), (8, 0x09)])
 COMMIT = report([(62, 0xaa), (63, 0x55)])
 TRAILER = report([(0, 0x04), (1, 0xf0)])
+HEARTBEAT = report([(0, 0x04), (1, 0x02)])
 
 
 def frame(buffer):
-    """buffer: {led_index: (r, g, b)} -> list of 8 x 64-byte reports."""
+    """buffer: {slot: (r, g, b)} -> list of 8 x 64-byte reports."""
     reports = []
     for rep_i in range(8):
         rep = [0] * 64
@@ -81,42 +111,82 @@ def open_device():
 
 
 def send(h, payload, label=""):
-    """Send one 64-byte payload as a Feature report (report id 0 prefixed).
-
-    Returns the number of bytes written, or -1 on failure. Windows is strict
-    about the buffer length matching the report's declared size, so a failure
-    here (rather than the device ignoring us) is the thing to catch.
-    """
+    """Write one 64-byte payload as a Feature report (report id 0 prefixed)."""
     try:
         n = h.send_feature_report(bytes([0x00] + payload))
     except Exception as e:  # noqa: BLE001
-        print(f"  {label}: EXCEPTION {e!r}")
+        print(f"  {label}: WRITE EXCEPTION {e!r}")
         return -1
     if n is None or n < 0:
         print(f"  {label}: write FAILED (returned {n}); last error: {h.error()}")
-    time.sleep(0.003)  # gentle pacing between reports
+    elif VERBOSE:
+        print(f"  {label}: wrote {n}")
+    time.sleep(TICK)
     return n
 
 
-# The app sends these constantly while it's running (keeps a "software" session).
-HEARTBEAT = [report([(0, 0x04), (1, 0x02)]), report([(0, 0x04), (1, 0xf5), (8, 0x09)])]
+def read(h, label=""):
+    """Read the device's ACK (Feature GET_REPORT, report id 0). Returns bytes.
+
+    The device is a request/response lock-step: after each control command it
+    parks a response that must be drained before it will accept the next write.
+    """
+    for attempt in range(3):
+        try:
+            data = h.get_feature_report(0, READ_LEN)
+        except Exception as e:  # noqa: BLE001
+            if attempt == 2:
+                print(f"  {label}: READ EXCEPTION {e!r}")
+                return b""
+            time.sleep(0.004)
+            continue
+        b = bytes(data or b"")
+        if VERBOSE:
+            print(f"  {label}: read {len(b)}B  {b[:8].hex()}")
+        time.sleep(TICK)
+        return b
+    return b""
+
+
+def cmd(h, payload, ack=True, label=""):
+    """Send a control report and (optionally) drain the device's ACK read."""
+    send(h, payload, label)
+    if ack:
+        read(h, label + " ack")
+
+
+def init_session(h):
+    """One-time connect handshake (capture frames 1095-1151)."""
+    print("Init handshake:")
+    cmd(h, PRE_ATTN, label="init 0418")
+    cmd(h, report([(0, 0x04), (1, 0x28), (8, 0x01)]), label="init 0428")
+    cmd(h, CONFIG, label="init config")
+    cmd(h, HEARTBEAT, label="init 0402")
 
 
 def apply_once(h, buf):
-    results = []
-    for i, r in enumerate(PREAMBLE):
-        results.append(send(h, r, f"preamble[{i}]"))
+    """Switch to static per-key and upload one frame (capture ~frame 3195)."""
+    print("Apply frame:")
+    cmd(h, HEARTBEAT, label="hb")
+    cmd(h, PRE_ATTN, label="pre 0418")
+    cmd(h, PRE_MODE, label="pre 0413")
+    cmd(h, PRE_80, label="pre 80")
+    cmd(h, PRE_F0, ack=False, label="pre 04f0")
+    cmd(h, PRE_ATTN, label="pre 0418b")
+    cmd(h, PRE_LATCH, label="pre 0423")
     for i, r in enumerate(frame(buf)):
-        results.append(send(h, r, f"data[{i}]"))
-    results.append(send(h, COMMIT, "commit"))
-    results.append(send(h, TRAILER, "trailer"))
-    return results
+        send(h, r, f"data[{i}]")  # data reports stream without ACK reads
+    cmd(h, COMMIT, label="commit")
+    send(h, TRAILER, "trailer")  # 04 f0, no ACK read
 
 
 def main():
+    global VERBOSE
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     mode = args[0] if args else "esc-red"
     hold = "--hold" in sys.argv
+    VERBOSE = "--quiet" not in sys.argv
+
     if mode == "esc-red":
         buf = {1: (0xff, 0x00, 0x00)}
     elif mode == "all-red":
@@ -127,20 +197,17 @@ def main():
         sys.exit("mode must be: esc-red | all-red | off")
 
     h = open_device()
-    results = apply_once(h, buf)
-    ok = sum(1 for n in results if n and n > 0)
-    print(f"\nSent '{mode}': {ok}/{len(results)} writes accepted (each should return 65).")
+    init_session(h)
+    apply_once(h, buf)
+    print(f"\nSent '{mode}'. WATCH THE KEYBOARD.")
 
     if hold:
-        # Test the "software session" theory: keep the heartbeat alive and
-        # periodically re-apply the frame for ~12s. WATCH THE KEYBOARD.
-        print("Holding session ~12s (heartbeat + re-apply). WATCH THE KEYBOARD. Ctrl+C to stop.")
-        end = time.time() + 12
+        print("Holding session ~12s (heartbeat + re-apply). Ctrl+C to stop.")
+        end_at = time.time() + 12
         tick = 0
         try:
-            while time.time() < end:
-                for hb in HEARTBEAT:
-                    send(h, hb)
+            while time.time() < end_at:
+                cmd(h, HEARTBEAT, label="hb")
                 tick += 1
                 if tick % 8 == 0:
                     apply_once(h, buf)
@@ -149,8 +216,6 @@ def main():
             pass
 
     h.close()
-    if ok != len(results):
-        print("Some writes were rejected — a report-length issue; paste the numbers.")
 
 
 if __name__ == "__main__":
