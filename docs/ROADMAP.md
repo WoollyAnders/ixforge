@@ -4,6 +4,53 @@ Snapshot of where the project stands and what's next. (Companion to the per-devi
 protocol notes in [docs/protocols/](protocols/) and the contributor guide in
 [CONTRIBUTING.md](../CONTRIBUTING.md).)
 
+> **Resuming after a PC/session restart?** Do the capture below — it's the one gating
+> step. Everything else is built (see "What's built"). When the capture is done, hand
+> the files back and the placeholder protocol becomes real.
+
+## ▶ Resume here after restart — capture the protocol (Wireshark + USBPcap)
+
+The F108 Pro uses a **proprietary Sonix protocol** (VID `0x0C45`; it is **not** VIA, verified
+via usevia.app), so we capture the official software's USB traffic and decode it. Do this on
+**native Windows** with the keyboard connected **wired (USB-C)**.
+
+**1. Install (once).**
+- Install **Wireshark** (Windows 64-bit) from wireshark.org — keep the defaults (Wireshark, TShark, tools).
+- When prompted, install **Npcap** (defaults; it's the network driver, required generally, harmless here).
+- **USBPcap:** recent Wireshark installers include it as a checkbox on the *Choose Components* screen — **check it**. If it isn't offered, install **USBPcap** separately from usbpcap.com.
+- **Reboot** — USBPcap is a kernel driver and won't appear until you restart.
+
+**2. Verify + identify the device.**
+- Plug the F108 Pro in (wired). Launch **Wireshark as Administrator**.
+- The interface list should now show **`USBPcap1`, `USBPcap2`, …**. (Missing? reboot / run as admin.)
+- Note the VID:PID: Device Manager → the AULA HID device → *Details → Hardware IDs* (expect `VID_0C45&PID_xxxx`).
+- USBPcap captures a whole **root hub**; pick the `USBPcapN` whose device tree includes the AULA keyboard.
+
+**3. Capture — one change per file.** Open AULA's official F108 Pro software. For each item: start
+the capture on the right `USBPcapN`, make **exactly one** change in the app, stop, then
+**File → Save As** with the given name (keep each capture short — a few seconds around the change):
+
+| File | Change to make in the official app |
+|---|---|
+| `01-init` | just launch / connect (baseline handshake) |
+| `02-esc-red` | set only **Esc** → red |
+| `03-esc-green` | set **Esc** → green |
+| `04-key1-red` | set the **next** key (e.g. `1`) → red |
+| `05-all-blue` | set **all** keys → blue |
+| `06-brightness` | change brightness only |
+| `07-effect` | pick one built-in effect |
+| `08-lcd-image` *(later)* | upload an image to the screen |
+| `09-macro` *(later)* | record/assign a macro |
+
+**4. Hand it back.** Save the `.pcapng` files under **`captures/aula-f108-pro/`** in the repo
+(that folder is git-ignored, so they stay local — perfect for clean-room). To make decoding fast,
+also copy the raw write bytes: in Wireshark, select an **outgoing** packet to the keyboard
+(`URB_CONTROL out` / `SET_REPORT`, or an interrupt OUT), find the **HID data / "Leftover Capture
+Data"** field, right-click → **Copy → … as a Hex Stream**, and paste those into
+[docs/protocols/aula-f108-pro.md](protocols/aula-f108-pro.md). Then tell the next session: the
+confirmed **VID:PID**, the **software version**, and where the files are — it will diff the
+captures, replace the placeholder `sonix` encoder, add byte-exact tests, and fill the real profile.
+
 ## What's built and working
 
 **Backend (Rust workspace, all tested, clippy-clean):**
@@ -31,9 +78,9 @@ Nothing actually lights up on hardware yet — that's **gated on a USB capture**
 
 - **The F108 Pro is NOT VIA-compatible** (verified: usevia.app does not see it) — it uses a
   **proprietary Sonix protocol** (VID `0x0C45`). So the path is capture + decode.
-- **Next action (on native Windows):** capture with Wireshark + USBPcap per
-  [docs/protocols/aula-f108-pro.md](protocols/aula-f108-pro.md), then the placeholder
-  `sonix` encoder becomes the real one + byte-exact golden tests + real profile values.
+- **Next action:** the Wireshark + USBPcap capture playbook at the top of this file. Once the
+  captures are in, the placeholder `sonix` encoder becomes the real one + byte-exact golden
+  tests + real profile values.
 
 ## Roadmap
 
