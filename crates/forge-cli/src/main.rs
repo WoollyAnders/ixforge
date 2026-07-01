@@ -85,6 +85,17 @@ fn run() -> Result<(), String> {
             let color = parse_color(opts.get("color").ok_or("missing --color")?)?;
             apply(&backend, dev, RgbCommand::SetAll(color), hold_secs(&opts))
         }
+        "probe" => {
+            let dev = pick_device(&matched, opts.get("device"))?;
+            let from = opts.get("from").and_then(|s| parse_int(s)).unwrap_or(1);
+            let to = opts.get("to").and_then(|s| parse_int(s)).unwrap_or(0x7b);
+            let dwell = opts.get("dwell").and_then(|s| s.parse().ok()).unwrap_or(3.0f64);
+            let color = match opts.get("color") {
+                Some(c) => parse_color(c)?,
+                None => Color { r: 0xff, g: 0xff, b: 0xff },
+            };
+            probe(&backend, dev, from, to, dwell, color)
+        }
         "effect" => {
             let dev = pick_device(&matched, opts.get("device"))?;
             let name = opts.get("name").ok_or("missing --name")?;
@@ -150,6 +161,52 @@ fn hold_secs(opts: &HashMap<String, String>) -> Option<f64> {
     opts.get("hold").and_then(|s| s.parse().ok())
 }
 
+/// Parse a decimal or `0x`-prefixed hex integer.
+fn parse_int(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse().ok()
+    }
+}
+
+/// Sweep LED indices `from..=to`, lighting one at a time so the operator can
+/// record which physical key each index drives (builds the key→led_index map).
+/// Indices with no LED simply stay dark — note those as gaps.
+fn probe(
+    backend: &HidapiBackend,
+    dev: &MatchedDevice<'_>,
+    from: u32,
+    to: u32,
+    dwell: f64,
+    color: Color,
+) -> Result<(), String> {
+    let drivers = forge_drivers::all_drivers();
+    let mut session = open_matched(backend, dev, &drivers).map_err(|e| e.to_string())?;
+    println!(
+        "Probing led_index {from}..={to} on {}. Watch the board; note the key that lights for each index.\n",
+        dev.profile.display_name
+    );
+    // Each apply_rgb streams for ~2.5s (enough to see clearly); `dwell` sets how
+    // many streams per index for a longer look.
+    let reps = dwell.max(1.0).round() as u32;
+    for idx in from..=to {
+        let mut frame = vec![Color::BLACK; 128];
+        if (idx as usize) < frame.len() {
+            frame[idx as usize] = color;
+        }
+        println!("led_index {idx} (0x{idx:02x}) — which key is lit?");
+        for _ in 0..reps {
+            session
+                .apply_rgb(&RgbCommand::SetFrame(frame.clone()))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    println!("\nProbe done ({from}..={to}). Send me the index→key list and I'll build the profile.");
+    Ok(())
+}
+
 fn pick_device<'a, 'p>(
     matched: &'a [MatchedDevice<'p>],
     wanted: Option<&String>,
@@ -193,7 +250,10 @@ USAGE:
   forge-cli list
   forge-cli set-rgb --key <KEYID> --color <rrggbb> [--hold <secs>] [--device <id>]
   forge-cli fill --color <rrggbb> [--hold <secs>] [--device <id>]
+  forge-cli probe [--from <n>] [--to <n>] [--dwell <secs>] [--color <rrggbb>] [--device <id>]
   forge-cli effect --name <id> [--speed 1-5] [--brightness 1-5] [--color <rrggbb>] [--device <id>]
+
+  probe: light one LED index at a time (from..=to, hex ok e.g. 0x1f) to map keys.
 
   --hold <secs>: keep re-streaming the frame for ~<secs> so the color locks and
                  holds steadily (recommended for the AULA F108 Pro; try --hold 10).";
