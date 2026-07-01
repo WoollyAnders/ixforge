@@ -11,9 +11,9 @@
 | Field | Value |
 |---|---|
 | Model | AULA F108 Pro (full-size, 104 keys) |
-| Controller | **Sonix** (SN32F2xx-class) — inferred from VID `0x0C45`; *confirm* |
-| VID:PID | `0x0C45` : `0x800A` — *confirm in wired mode* |
-| Config interface / usage page | *TODO* (several HID interfaces; Windows showed iface 3) |
+| Controller | **Sonix** (VID `0x0C45`) — confirmed (device addr 11 in capture) |
+| VID:PID | `0x0C45` : `0x800A` — **confirmed** |
+| Config interface | **interface 3**, HID **Feature** reports (`SET_REPORT`), report ID 0, 64 bytes — **confirmed** |
 | Extras | 1.14" TFT screen, multifunction knob, per-key RGB (104 LEDs) |
 | Connectivity | Tri-mode (BT / 2.4GHz / USB-C) |
 | Captured firmware revision | *TODO* |
@@ -26,10 +26,11 @@ Plug in by cable, confirm the app sees the keyboard, then capture.
 
 ## Provenance
 
-- Captured by: *TODO*
-- Date: *TODO*
-- Official software version: *TODO* (from aulakeyboard.com "F108 Pro Drive")
-- Capture files: `captures/aula-f108-pro/*.pcapng` *(not committed; large)*
+- Captured by: WoollyAnders (device owner)
+- Date: 2026-07-01
+- Official software version: *TODO*
+- Capture files: `captures/aula-f108-pro/02-…` (idle/handshake), `03-…` (Esc→red, Esc→green,
+  W→red, all→red) — local only, git-ignored.
 
 ## Capture log
 
@@ -47,15 +48,37 @@ One variable per capture:
 | `08-lcd-image.pcapng` | upload an image to the TFT screen |
 | `09-macro.pcapng` | record/assign one macro |
 
-## Findings (fill in from packet diffs)
+## Findings
 
-### RGB — per-key color write
-- Report mechanism: *TODO — feature vs output report*
-- Report ID / length: `0x__` / `__` bytes
-- Opcode, key/LED index field, color payload offset, channel order: *TODO*
-- Paging across multiple reports? offset field: *TODO*
-- Checksum: *TODO*
-- Init / commit sequence: *TODO*
+### RGB — per-key color write — **DECODED** (from `03-…`)
+- **Transport:** `SET_REPORT` (`bmRequestType 0x21`, `bRequest 0x09`), `wValue 0x0300`
+  (**Feature** report, **report ID 0**), `wIndex 3` (**interface 3**), `wLength 64`.
+  → 64-byte **Feature reports on interface 3**.
+- **LED frame:** the full per-key buffer is **8 consecutive Feature reports**, each = **16
+  records × 4 bytes** = `[led_index, R, G, B]` (color order **RGB**, one byte each). Slots with
+  no LED are `00 00 00 00`. Real LED indices run `0x01 .. 0x7b`; **index `0` = none**.
+- **Proof** (same slot, `led_index = 1` = Esc):
+  - Esc→red → record `01 ff 00 00`
+  - Esc→green → record `01 00 ff 00`  ⇒ byte1 = R, byte2 = G, byte3 = B.
+  - `W`→red → record at index `0x4b` (report 5). *(captured W value was `ff 00 fc` — the
+    app's picker wasn't pure red; the `[idx,R,G,B]` layout still holds.)*
+- **Upload sequence per "apply"** (all 64-byte Feature writes on iface 3, in order):
+  1. `04 18 …`
+  2. `04 13 …[byte8]=01`
+  3. `80 … [byte9]=05 … [byte14..15]=aa 55`  (handshake/marker)
+  4. `04 f0 …`
+  5. `04 18 …`
+  6. `04 23 …[byte8]=09`  (begin LED data)
+  7. **8× LED-data reports** (the `[idx,R,G,B]×16` frame above; indices `0x00..0x7b`)
+  8. `00 … [byte62..63]=aa 55`  (commit)
+  9. `04 f0 …`
+- **Checksum:** none evident (color bytes change with nothing else moving).
+- **Idle heartbeat (ignore):** app alternates `04 02 …` / `04 f5 …[byte8]=09` while idle.
+
+**Still needed:** the full **key → led_index** map (only `Esc=0x01`, `W=0x4b` known so far).
+Fastest way to get it: single-key captures walking across the board, or one capture per row.
+For now the encoder can be built + golden-tested against these captures; per-key painting is
+correct for known keys and lands fully once the map is complete.
 
 ### LCD (1.14" TFT)
 - Resolution / orientation / pixel format (RGB565?): *TODO*
