@@ -30,7 +30,7 @@ captured_by = "WoollyAnders"
 captured_on = "2026-07-01"
 firmware_revision = ""
 capture_files = ["captures/aula-f108-pro/04-connect-esc-red (connect + esc red/green)"]
-notes = "Per-key RGB decoded from capture and PROVEN on hardware via forge-cli (effect-path streaming). Full 104-key led_index map established empirically with `forge-cli probe` (keymap-probe.txt). Only KC_PPLS (num +)=0x7b is tentative."
+notes = "Per-key RGB decoded from capture and PROVEN on hardware via forge-cli (effect-path streaming). All 104 led_index values mapped + confirmed empirically with `forge-cli probe` (keymap-probe.txt)."
 
 # --- RGB: 104 per-key LEDs ---------------------------------------------------
 [[capabilities]]
@@ -69,8 +69,8 @@ effects = [
 # ⚠️ led_index = the device LED-buffer position (the driver sends [led_index,R,G,B]).
 # CONFIRMED: every led_index below was mapped empirically on hardware by lighting
 # each index one at a time and recording the physical key (`forge-cli probe`).
-# The map is NOT a simple row/column function (e.g. W=39/0x27, X=75/0x4b, num-=122).
-# Only KC_PPLS (num +) = 123/0x7b is TENTATIVE, pending a spot-check.
+# The map is NOT a simple row/column function (e.g. W=39/0x27, X=75/0x4b,
+# num-=122/0x7a, num+=123/0x7b). All 104 keys confirmed on hardware.
 matrix_size = [6, 22]
 keys = [
     # Function row
