@@ -58,12 +58,13 @@ fn run() -> Result<(), String> {
                 &backend,
                 dev,
                 RgbCommand::SetKeys(vec![(KeyId(key.clone()), color)]),
+                hold_secs(&opts),
             )
         }
         "fill" => {
             let dev = pick_device(&matched, opts.get("device"))?;
             let color = parse_color(opts.get("color").ok_or("missing --color")?)?;
-            apply(&backend, dev, RgbCommand::SetAll(color))
+            apply(&backend, dev, RgbCommand::SetAll(color), hold_secs(&opts))
         }
         "effect" => {
             let dev = pick_device(&matched, opts.get("device"))?;
@@ -91,15 +92,43 @@ fn run() -> Result<(), String> {
     }
 }
 
-fn apply(backend: &HidapiBackend, dev: &MatchedDevice<'_>, cmd: RgbCommand) -> Result<(), String> {
+fn apply(
+    backend: &HidapiBackend,
+    dev: &MatchedDevice<'_>,
+    cmd: RgbCommand,
+    hold: Option<f64>,
+) -> Result<(), String> {
     let drivers = forge_drivers::all_drivers();
     let mut session = open_matched(backend, dev, &drivers).map_err(|e| e.to_string())?;
-    session.apply_rgb(&cmd).map_err(|e| e.to_string())?;
-    println!(
-        "ok: {} ({})",
-        dev.profile.display_name, dev.profile.driver.family
-    );
+    match hold {
+        // Keep re-streaming for ~`secs` so the color locks and holds steadily
+        // (the board redraws its onboard profile otherwise). Watch the board.
+        Some(secs) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(secs);
+            let mut n = 0u32;
+            while std::time::Instant::now() < deadline {
+                session.apply_rgb(&cmd).map_err(|e| e.to_string())?;
+                n += 1;
+            }
+            println!(
+                "ok: {} ({}) — streamed {n}× over ~{secs:.0}s",
+                dev.profile.display_name, dev.profile.driver.family
+            );
+        }
+        None => {
+            session.apply_rgb(&cmd).map_err(|e| e.to_string())?;
+            println!(
+                "ok: {} ({})",
+                dev.profile.display_name, dev.profile.driver.family
+            );
+        }
+    }
     Ok(())
+}
+
+/// Parse an optional `--hold <secs>` (re-stream duration).
+fn hold_secs(opts: &HashMap<String, String>) -> Option<f64> {
+    opts.get("hold").and_then(|s| s.parse().ok())
 }
 
 fn pick_device<'a, 'p>(
@@ -143,6 +172,9 @@ forge-cli — IX Forge developer hardware tool
 
 USAGE:
   forge-cli list
-  forge-cli set-rgb --key <KEYID> --color <rrggbb> [--device <id>]
-  forge-cli fill --color <rrggbb> [--device <id>]
-  forge-cli effect --name <id> [--speed 1-5] [--brightness 1-5] [--color <rrggbb>] [--device <id>]";
+  forge-cli set-rgb --key <KEYID> --color <rrggbb> [--hold <secs>] [--device <id>]
+  forge-cli fill --color <rrggbb> [--hold <secs>] [--device <id>]
+  forge-cli effect --name <id> [--speed 1-5] [--brightness 1-5] [--color <rrggbb>] [--device <id>]
+
+  --hold <secs>: keep re-streaming the frame for ~<secs> so the color locks and
+                 holds steadily (recommended for the AULA F108 Pro; try --hold 10).";
