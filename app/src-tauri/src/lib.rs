@@ -1,17 +1,20 @@
 //! IX Forge Tauri backend: the IPC seam between the React UI and the device crates.
 //!
 //! Device I/O is blocking (hidapi), so each command runs its work on a blocking
-//! thread. To stay clear of `!Send` HID handles in shared state, commands create a
-//! fresh backend per call and don't hold sessions across calls. That is fine for
-//! the current placeholder protocol; a persistent per-device actor (the planned
-//! refinement) lands when the real protocol does.
+//! thread. The real Sonix driver drives the LEDs from a background streaming
+//! thread that must stay alive to hold a color (a keypress makes the board redraw
+//! its onboard profile otherwise), so we keep the open [`DeviceSession`] in app
+//! state (`AppState::active`) and reuse it across commands — `apply_rgb` just
+//! swaps the streamed frame in. The session (and its worker) is `Send`, so this is
+//! sound; it's replaced when the target device changes and dropped on exit.
 
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use forge_core::{Capability, EffectSelection, RgbCommand};
+use forge_core::{Capability, DeviceSession, EffectSelection, ForgeError, RgbCommand};
 use forge_profiles::{parse_profile, Preset, PresetStore, ProfileCatalog};
 use forge_registry::{device_id, match_devices, open_matched, DeviceWatcher};
 use forge_transport::hidapi_backend::HidapiBackend;
@@ -25,6 +28,42 @@ const EMBEDDED_PROFILES: &[&str] = &[include_str!(concat!(
 
 struct AppState {
     catalog: ProfileCatalog,
+    /// The currently-open device session, kept alive so its background streaming
+    /// worker holds the color. Reopened when the target device id changes.
+    active: Arc<Mutex<Option<ActiveDevice>>>,
+}
+
+/// An open session bound to a specific device id.
+struct ActiveDevice {
+    id: String,
+    session: Box<dyn DeviceSession>,
+}
+
+/// Ensure `active` holds a live session for `id`, then run `f` on it. Opening a
+/// session enumerates + matches (blocking) and spawns the streaming worker; once
+/// open it is reused so subsequent calls just swap the streamed frame.
+fn run_on_session(
+    catalog: &ProfileCatalog,
+    active: &Arc<Mutex<Option<ActiveDevice>>>,
+    id: String,
+    f: impl FnOnce(&mut dyn DeviceSession) -> Result<(), ForgeError>,
+) -> Result<(), String> {
+    let mut guard = active.lock().map_err(|_| "session lock poisoned".to_string())?;
+    let needs_open = guard.as_ref().map(|a| a.id != id).unwrap_or(true);
+    if needs_open {
+        let backend = HidapiBackend::new().map_err(|e| e.to_string())?;
+        let infos = backend.enumerate().map_err(|e| e.to_string())?;
+        let matched = match_devices(infos, catalog);
+        let dev = matched
+            .iter()
+            .find(|m| device_id(&m.info).0 == id)
+            .ok_or_else(|| format!("device not found: {id}"))?;
+        let drivers = forge_drivers::all_drivers();
+        let session = open_matched(&backend, dev, &drivers).map_err(|e| e.to_string())?;
+        *guard = Some(ActiveDevice { id, session }); // drops any previous session/worker
+    }
+    let active = guard.as_mut().expect("session present after open");
+    f(active.session.as_mut()).map_err(|e| e.to_string())
 }
 
 fn load_catalog() -> ProfileCatalog {
@@ -123,18 +162,9 @@ async fn set_rgb(
     cmd: RgbCommand,
 ) -> Result<(), String> {
     let catalog = state.catalog.clone();
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let backend = HidapiBackend::new().map_err(|e| e.to_string())?;
-        let infos = backend.enumerate().map_err(|e| e.to_string())?;
-        let matched = match_devices(infos, &catalog);
-        let dev = matched
-            .iter()
-            .find(|m| forge_registry::device_id(&m.info).0 == device_id)
-            .ok_or_else(|| format!("device not found: {device_id}"))?;
-        let drivers = forge_drivers::all_drivers();
-        let mut session = open_matched(&backend, dev, &drivers).map_err(|e| e.to_string())?;
-        session.apply_rgb(&cmd).map_err(|e| e.to_string())?;
-        Ok(())
+    let active = state.active.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_on_session(&catalog, &active, device_id, move |s| s.apply_rgb(&cmd))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -147,18 +177,9 @@ async fn set_effect(
     sel: EffectSelection,
 ) -> Result<(), String> {
     let catalog = state.catalog.clone();
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let backend = HidapiBackend::new().map_err(|e| e.to_string())?;
-        let infos = backend.enumerate().map_err(|e| e.to_string())?;
-        let matched = match_devices(infos, &catalog);
-        let dev = matched
-            .iter()
-            .find(|m| forge_registry::device_id(&m.info).0 == device_id)
-            .ok_or_else(|| format!("device not found: {device_id}"))?;
-        let drivers = forge_drivers::all_drivers();
-        let mut session = open_matched(&backend, dev, &drivers).map_err(|e| e.to_string())?;
-        session.set_effect(&sel).map_err(|e| e.to_string())?;
-        Ok(())
+    let active = state.active.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_on_session(&catalog, &active, device_id, move |s| s.set_effect(&sel))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -193,7 +214,7 @@ async fn delete_preset(app: tauri::AppHandle, device: String, name: String) -> R
 /// Background hotplug poller: emits `device://attached` / `device://detached`
 /// as supported devices connect/disconnect. Runs on its own thread because the
 /// `hidapi` handle is blocking and not `Send`, so the backend lives entirely here.
-fn hotplug_loop(app: tauri::AppHandle) {
+fn hotplug_loop(app: tauri::AppHandle, active: Arc<Mutex<Option<ActiveDevice>>>) {
     let catalog = load_catalog();
     let mut backend = match HidapiBackend::new() {
         Ok(b) => b,
@@ -220,6 +241,14 @@ fn hotplug_loop(app: tauri::AppHandle) {
                     }
                 }
                 for id in delta.detached {
+                    // If the detached device held the live session, drop it so a
+                    // reattach reopens a fresh streaming worker instead of reusing
+                    // one whose thread has already died on the lost handle.
+                    if let Ok(mut guard) = active.lock() {
+                        if guard.as_ref().map(|a| a.id == id.0).unwrap_or(false) {
+                            *guard = None;
+                        }
+                    }
                     let _ = app.emit("device://detached", Detached { id: id.0 });
                 }
             }
@@ -230,13 +259,15 @@ fn hotplug_loop(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let active: Arc<Mutex<Option<ActiveDevice>>> = Arc::new(Mutex::new(None));
     tauri::Builder::default()
         .manage(AppState {
             catalog: load_catalog(),
+            active: active.clone(),
         })
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
-            std::thread::spawn(move || hotplug_loop(handle));
+            std::thread::spawn(move || hotplug_loop(handle, active));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
