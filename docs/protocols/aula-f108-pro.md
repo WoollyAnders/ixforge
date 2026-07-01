@@ -146,9 +146,15 @@ solid red; red **survived unplug/replug**, so the app writes onboard memory. Fin
   puts the board into an **effect (radial rainbow)**, not a static color — so `05` there is likely
   an effect index, not "static mode".
 - The session is **read-heavy**: 89 writes vs **263 `GET_REPORT` reads**. ⇒ the static save only
-  "takes" inside the app's live, continuously-polled session; reproducing it needs a **full-session
-  replay** (all reads + exact interleaving/timing), not a one-shot apply. **OPEN** — next experiment
-  is to replay `05` in its entirety (recoloring only the data reports) and confirm it persists.
+  "takes" inside the app's live, continuously-polled session.
+- **Tried and ruled out** (none persisted after replug): bare static apply in isolation; static
+  apply + the `01 05 03` setup (→ rainbow); a verbatim slice of `05`'s opening (→ rainbow); and
+  the static apply sent **inside an active `04 20` software session** (shows the color live but does
+  **not** write onboard). ⇒ the commit is almost certainly **gated on the specific `GET_REPORT`
+  responses** the app reads during the save (drain-and-proceed), which none of the above reproduce.
+- **OPEN — next experiment:** replay capture `05` in its **entirety** (all 89 writes AND 263 reads,
+  in order, ~33 ms), recoloring only the data reports, and confirm it persists. If it does, bisect
+  to the minimal save; if not, the reads' *return values* matter and we decode those.
 - Live display via the `04 20` effect stream is unaffected and already works.
 
 **Key → led_index map: DONE** — all 104 mapped empirically with `forge-cli probe` (see
