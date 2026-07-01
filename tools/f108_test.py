@@ -13,6 +13,7 @@ Run with the keyboard WIRED and the official AULA app CLOSED:
     python tools/f108_test.py off         # all off
 """
 import sys
+import time
 import hid
 
 VID, PID, IFACE = 0x0C45, 0x800A, 3
@@ -79,9 +80,22 @@ def open_device():
     return h
 
 
-def send(h, payload):
-    # First byte = report ID (0 for this device).
-    h.send_feature_report(bytes([0x00] + payload))
+def send(h, payload, label=""):
+    """Send one 64-byte payload as a Feature report (report id 0 prefixed).
+
+    Returns the number of bytes written, or -1 on failure. Windows is strict
+    about the buffer length matching the report's declared size, so a failure
+    here (rather than the device ignoring us) is the thing to catch.
+    """
+    try:
+        n = h.send_feature_report(bytes([0x00] + payload))
+    except Exception as e:  # noqa: BLE001
+        print(f"  {label}: EXCEPTION {e!r}")
+        return -1
+    if n is None or n < 0:
+        print(f"  {label}: write FAILED (returned {n}); last error: {h.error()}")
+    time.sleep(0.003)  # gentle pacing between reports
+    return n
 
 
 def main():
@@ -96,14 +110,23 @@ def main():
         sys.exit("mode must be: esc-red | all-red | off")
 
     h = open_device()
-    for r in PREAMBLE:
-        send(h, r)
-    for r in frame(buf):
-        send(h, r)
-    send(h, COMMIT)
-    send(h, TRAILER)
+    results = []
+    for i, r in enumerate(PREAMBLE):
+        results.append(send(h, r, f"preamble[{i}]"))
+    for i, r in enumerate(frame(buf)):
+        results.append(send(h, r, f"data[{i}]"))
+    results.append(send(h, COMMIT, "commit"))
+    results.append(send(h, TRAILER, "trailer"))
     h.close()
-    print(f"Sent '{mode}'. Look at the keyboard.")
+
+    ok = sum(1 for n in results if n and n > 0)
+    print(f"\nSent '{mode}': {ok}/{len(results)} writes accepted (each should return 65).")
+    if ok == len(results):
+        print("All writes went through. If nothing lit, the app likely puts the")
+        print("device in a mode first — we'll capture that next.")
+    else:
+        print("Some writes were rejected — a Windows report-length issue. Paste the")
+        print("numbers above and I'll adjust the report size.")
 
 
 if __name__ == "__main__":
