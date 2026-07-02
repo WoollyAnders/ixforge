@@ -65,62 +65,78 @@ function rand(i: number): number {
   return v - Math.floor(v);
 }
 
+// Keyed by the device's real onboard effect ids (see profiles/aula/f108-pro.toml).
+// Each is a UI approximation of the animation's motion — enough to tell them apart.
 const EFFECTS: Record<string, EffectFn> = {
+  // 1 — solid active color
   static: ({ color }) => color,
-  breathing: ({ color, t, sp }) => dim(color, 0.15 + 0.85 * (0.5 + 0.5 * Math.sin(t * sp * 2))),
+  // 2 — keys mostly lit, occasional flicker-on (reactive "single on")
+  single_on: ({ idx, t, sp, color }) => {
+    const ph = (t * sp * 0.8 + rand(idx) * 1.4) % 1.6;
+    return ph < 0.4 ? dim(color, 0.3 + 0.7 * (ph / 0.4)) : color;
+  },
+  // 3 — keys lit, blink off on "press" (reactive "single off")
+  single_off: ({ idx, t, sp, color }) => {
+    const ph = (t * sp * 0.8 + rand(idx) * 1.4) % 1.6;
+    return ph < 0.3 ? dim(color, 0.12) : color;
+  },
+  // 4 — random twinkle
+  glittering: ({ idx, t, sp, color }) => {
+    const ph = (t * sp * 0.6 + rand(idx)) % 1;
+    return ph < 0.18 ? dim(color, 1 - ph / 0.18) : dim(color, 0.14);
+  },
+  // 5 — drops falling per column
+  falling: ({ nx, ny, t, sp, color }) => {
+    const col = Math.floor(nx * 14);
+    const ph = (ny + rand(col) - t * sp * 0.5) % 1;
+    const v = ph > 0 && ph < 0.3 ? 1 - ph / 0.3 : 0;
+    return dim(color, 0.12 + 0.88 * v);
+  },
+  // 6 — per-key rainbow, slowly cycling
+  colorful: ({ idx, n, t, sp }) => hsl((idx / Math.max(n, 1)) * 360 + t * sp * 20, 90, 58),
+  // 7 — whole-board breathe in the active color
+  breathe: ({ color, t, sp }) => dim(color, 0.15 + 0.85 * (0.5 + 0.5 * Math.sin(t * sp * 2))),
+  // 8 — global hue cycle
   spectrum: ({ t, sp }) => hsl(t * sp * 60, 90, 58),
-  wave: ({ nx, t, sp }) => hsl(nx * 320 + t * sp * 90, 90, 58),
-  aurora: ({ ny, t, sp }) => hsl(150 + ny * 120 + t * sp * 35, 70, 55),
-  neon_stream: ({ nx, t, sp }) => hsl(200 + 60 * Math.sin(nx * 6 - t * sp * 2), 90, 56),
-  ripple: ({ nx, ny, t, sp }) => {
+  // 9 — rings radiating outward from center
+  outward: ({ nx, ny, t, sp }) => {
+    const d = Math.hypot(nx - 0.5, ny - 0.5);
+    const v = 0.5 + 0.5 * Math.sin(d * 14 - t * sp * 3);
+    return dim(hsl(t * sp * 40 + d * 120, 88, 56), 0.2 + 0.8 * v);
+  },
+  // 10 — hue wave scrolling left→right
+  scrolling: ({ nx, t, sp }) => hsl(nx * 320 + t * sp * 90, 90, 57),
+  // 11 — solid hue band rolling across
+  rolling: ({ nx, t, sp }) => hsl(((((nx - t * sp * 0.25) % 1) + 1) % 1) * 360, 90, 56),
+  // 12 — rotating spiral
+  rotating: ({ nx, ny, t, sp }) => {
+    const ang = Math.atan2(ny - 0.5, nx - 0.5);
+    return hsl((ang / Math.PI) * 180 + t * sp * 70, 88, 56);
+  },
+  // 13 — expanding ring burst
+  explode: ({ nx, ny, t, sp }) => {
+    const d = Math.hypot(nx - 0.5, ny - 0.5);
+    const pos = (t * sp * 0.3) % 1;
+    return dim(hsl(20 + pos * 300, 90, 56), clamp01(1 - Math.abs(d - pos) * 6));
+  },
+  // 14 — comet sweeping left→right
+  launch: ({ nx, t, sp }) => {
+    const pos = (t * sp * 0.2) % 1;
+    return dim(hsl(180 + pos * 120, 88, 56), clamp01(1 - Math.abs(nx - pos) * 6));
+  },
+  // 15 — concentric ripples
+  ripples: ({ nx, ny, t, sp }) => {
     const d = Math.hypot(nx - 0.5, ny - 0.5);
     const v = 0.5 + 0.5 * Math.sin(d * 10 - t * sp * 3);
     return dim(hsl(200 + d * 120, 85, 55), 0.2 + 0.8 * v);
   },
-  snake: ({ idx, n, t, sp, color }) => {
-    const head = Math.floor(t * sp * 14) % n;
-    const dist = (idx - head + n) % n;
-    return dist < 6 ? dim(color, 1 - dist / 6) : OFF;
-  },
-  scan: ({ nx, t, sp }) => {
-    const pos = (t * sp * 0.18) % 1;
-    const d = Math.abs(nx - pos);
-    return dim(hsl(190, 85, 56), clamp01(1 - d * 6));
-  },
-  radar: ({ nx, ny, t, sp }) => {
-    const ang = (Math.atan2(ny - 0.5, nx - 0.5) + Math.PI) / (2 * Math.PI);
-    const pos = (t * sp * 0.12) % 1;
-    let d = Math.abs(ang - pos);
-    d = Math.min(d, 1 - d);
-    return dim(hsl(160, 85, 55), clamp01(1 - d / 0.12));
-  },
-  spiral: ({ nx, ny, t, sp }) => {
-    const ang = Math.atan2(ny - 0.5, nx - 0.5);
-    return hsl((ang / Math.PI) * 180 + t * sp * 60, 85, 55);
-  },
-  stars: ({ idx, t, sp, color }) => {
-    const ph = (t * sp * 0.5 + rand(idx)) % 1;
-    return ph < 0.15 ? dim(color, 1 - ph / 0.15) : OFF;
-  },
-  reactive: ({ idx, t, sp, color }) => {
-    const ph = (t * sp * 0.7 + rand(idx) * 1.3) % 1.3;
-    return ph < 0.5 ? dim(color, 1 - ph * 2) : OFF;
-  },
-  raindrop: ({ nx, ny, t, sp }) => {
-    const col = Math.floor(nx * 14);
-    const ph = (ny + rand(col) - t * sp * 0.4) % 1;
-    const v = ph > 0 && ph < 0.25 ? 1 - ph / 0.25 : 0;
-    return dim(hsl(210, 80, 56), v);
-  },
-  flash_away: ({ t, sp, color }) => {
-    const ph = (t * sp * 0.4) % 1;
-    return dim(color, ph < 0.5 ? 1 - ph * 2 : 0);
-  },
-  music: ({ nx, t, sp }) => {
-    const col = Math.floor(nx * 14);
-    const v = 0.3 + 0.7 * Math.abs(Math.sin(t * sp * 3 + rand(col) * 6));
-    return dim(hsl(290 - nx * 130, 85, 56), v);
-  },
+  // 16 — smooth neon flow
+  flowing: ({ nx, t, sp }) => hsl(200 + 80 * Math.sin(nx * 6 - t * sp * 2), 90, 56),
+  // 17 — rainbow with a brightness pulse
+  pulsating: ({ t, sp }) =>
+    dim(hsl(t * sp * 45, 90, 58), 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(t * sp * 3))),
+  // 18 — diagonal gradient sweep
+  tilt: ({ nx, ny, t, sp }) => hsl((nx + ny) * 160 + t * sp * 70, 88, 56),
 };
 
 /** Compute the per-key colors for an effect at time `tMs`. */
