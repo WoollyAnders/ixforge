@@ -31,6 +31,12 @@ function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
+// Positive modulo into [0,1). JS `%` returns negative for negative inputs, which
+// freezes a moving animation once its phase crosses zero.
+function wrap01(v: number): number {
+  return ((v % 1) + 1) % 1;
+}
+
 function hsl(h: number, s: number, l: number): string {
   h = ((h % 360) + 360) % 360;
   s /= 100;
@@ -93,12 +99,12 @@ const EFFECTS: Record<string, EffectFn> = {
     return step === 0 ? color : dim(color, 0.4);
   },
 
-  // Falling — drops per column (owner: "previewed perfectly").
+  // Falling — continuous rain of drops per column (loops forever).
   falling: ({ nx, ny, t, sp, color }) => {
     const col = Math.floor(nx * 14);
-    const ph = (ny + rand(col) - t * sp * 0.4) % 1;
-    const v = ph > 0 && ph < 0.3 ? 1 - ph / 0.3 : 0;
-    return dim(color, 0.1 + 0.9 * v);
+    const ph = wrap01(ny + rand(col) - t * sp * 0.4);
+    const v = ph < 0.3 ? 1 - ph / 0.3 : 0;
+    return dim(color, 0.08 + 0.92 * v);
   },
 
   // Colorful — each key runs its own hue cycle at a different phase.
@@ -128,40 +134,60 @@ const EFFECTS: Record<string, EffectFn> = {
     return hsl((ang / Math.PI) * 180 + t * sp * 50, 88, 56);
   },
 
-  // Explode — one row at a time ripples a color across itself (idle approximation).
-  explode: ({ nx, ny, t, sp }) => {
+  // Explode — a triggered row fills left→right with a random color per key.
+  explode: ({ nx, ny, idx, t, sp }) => {
     const row = Math.round(ny * 5);
     const active = Math.floor(t * sp * 1.1) % 6;
     if (row !== active) return OFF;
-    const pos = (t * sp * 1.1) % 1;
-    return dim(hsl((active / 6) * 360, 90, 57), clamp01(1 - Math.abs(nx - pos) * 4));
+    const pos = wrap01(t * sp * 1.1); // ripple front sweeps the row
+    if (nx > pos) return OFF;
+    return hsl(rand(idx * 7 + active * 31) * 360, 90, 57); // random per-key color
   },
 
-  // Launch — a fast ripple washes across the whole board (idle approximation).
+  // Launch — a fast radial ripple expanding from the center.
   launch: ({ nx, ny, t, sp }) => {
-    const pos = (t * sp * 0.55) % 1.3; // gap between sweeps
-    const p = nx * 0.7 + ny * 0.3;
-    const v = clamp01(1 - Math.abs(p - pos) * 5);
-    return v > 0.02 ? hsl(180 + pos * 200, 88, 57) : OFF;
-  },
-
-  // Ripples — like Launch but a smooth continuous wave.
-  ripples: ({ nx, ny, t, sp }) => {
     const d = Math.hypot(nx - 0.5, ny - 0.5);
-    const v = 0.5 + 0.5 * Math.sin(d * 9 - t * sp * 2.2);
-    return dim(hsl(210 + d * 100, 85, 56), 0.15 + 0.85 * v);
+    const pos = wrap01(t * sp * 0.6) * 0.85; // expanding radius (resets each cycle)
+    const v = clamp01(1 - Math.abs(d - pos) * 6);
+    return v > 0.02 ? hsl(190 + pos * 260, 88, 57) : OFF;
   },
 
-  // Flowing — fills row by row top→bottom, left→right within a row.
+  // Ripples — like Launch but smoother, with ripples popping up at several spots
+  // (as if random keys were being pressed).
+  ripples: ({ nx, ny, t, sp }) => {
+    const sources: [number, number][] = [
+      [0.25, 0.35],
+      [0.62, 0.62],
+      [0.82, 0.3],
+      [0.45, 0.7],
+    ];
+    let best = 0;
+    for (let i = 0; i < sources.length; i++) {
+      const phase = wrap01(t * sp * 0.3 + i / sources.length);
+      const radius = phase * 0.9;
+      const d = Math.hypot(nx - sources[i][0], ny - sources[i][1]);
+      const v = clamp01(1 - Math.abs(d - radius) * 7) * (1 - phase);
+      if (v > best) best = v;
+    }
+    return best > 0.02 ? dim(hsl(200 + best * 90, 85, 57), 0.12 + 0.88 * best) : OFF;
+  },
+
+  // Flowing — lights one row at a time, top→bottom, filling left→right.
   flowing: ({ nx, ny, t, sp }) => {
-    const order = ny * 0.82 + nx * 0.18;
-    const pos = (t * sp * 0.35) % 1.25;
-    const v = clamp01(1 - Math.abs(order - pos) * 4);
-    return v > 0.02 ? hsl(t * sp * 28 + order * 130, 88, 56) : OFF;
+    const row = Math.round(ny * 5);
+    const active = Math.floor(t * sp * 1.0) % 6;
+    if (row !== active) return OFF;
+    const pos = wrap01(t * sp * 1.0);
+    return nx <= pos ? hsl((active / 6) * 300 + t * sp * 20, 88, 56) : OFF;
   },
 
-  // Pulsating — rainbow wave from the center out to the sides (horizontal).
-  pulsating: ({ nx, t, sp }) => hsl(Math.abs(nx - 0.5) * 520 - t * sp * 65, 90, 57),
+  // Pulsating — a brightness wave expanding from the center out to the sides.
+  pulsating: ({ nx, t, sp }) => {
+    const d = Math.abs(nx - 0.5) * 2; // 0 center → 1 edge
+    const pos = wrap01(t * sp * 0.5);
+    const v = clamp01(1 - Math.abs(d - pos) * 4);
+    return dim(hsl(t * sp * 22, 85, 57), 0.12 + 0.88 * v);
+  },
 
   // Tilt — "\" diagonal bands sweeping across.
   tilt: ({ nx, ny, t, sp }) => hsl((nx - ny) * 300 + t * sp * 60, 88, 56),
