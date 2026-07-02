@@ -66,77 +66,105 @@ function rand(i: number): number {
 }
 
 // Keyed by the device's real onboard effect ids (see profiles/aula/f108-pro.toml).
-// Each is a UI approximation of the animation's motion — enough to tell them apart.
+// Motion tuned to the owner's per-effect description (f108-animation-description).
+// Reactive effects (single on/off, glittering, explode, launch) show an idle
+// approximation since there's no key input in the preview.
 const EFFECTS: Record<string, EffectFn> = {
-  // 1 — solid active color
+  // Static — solid active color.
   static: ({ color }) => color,
-  // 2 — keys mostly lit, occasional flicker-on (reactive "single on")
+
+  // Single On — board dark; keys softly glow in then fade back to off.
   single_on: ({ idx, t, sp, color }) => {
-    const ph = (t * sp * 0.8 + rand(idx) * 1.4) % 1.6;
-    return ph < 0.4 ? dim(color, 0.3 + 0.7 * (ph / 0.4)) : color;
+    const ph = (t * sp * 0.5 + rand(idx) * 3) % 3; // sparse, staggered per key
+    const v = ph < 1 ? Math.sin(ph * Math.PI) : 0; // glow in→out over a ~1s window
+    return v > 0.02 ? dim(color, v) : OFF;
   },
-  // 3 — keys lit, blink off on "press" (reactive "single off")
+
+  // Single Off — board lit; keys softly dip off then fade back in.
   single_off: ({ idx, t, sp, color }) => {
-    const ph = (t * sp * 0.8 + rand(idx) * 1.4) % 1.6;
-    return ph < 0.3 ? dim(color, 0.12) : color;
+    const ph = (t * sp * 0.5 + rand(idx) * 3) % 3;
+    const dipv = ph < 1 ? Math.sin(ph * Math.PI) : 0;
+    return dim(color, 1 - 0.92 * dipv);
   },
-  // 4 — random twinkle
+
+  // Glittering — static base; random keys abruptly flash brighter (no transition).
   glittering: ({ idx, t, sp, color }) => {
-    const ph = (t * sp * 0.6 + rand(idx)) % 1;
-    return ph < 0.18 ? dim(color, 1 - ph / 0.18) : dim(color, 0.14);
+    const step = Math.floor(t * sp * 1.6 + rand(idx) * 13) % 9;
+    return step === 0 ? color : dim(color, 0.4);
   },
-  // 5 — drops falling per column
+
+  // Falling — drops per column (owner: "previewed perfectly").
   falling: ({ nx, ny, t, sp, color }) => {
     const col = Math.floor(nx * 14);
-    const ph = (ny + rand(col) - t * sp * 0.5) % 1;
+    const ph = (ny + rand(col) - t * sp * 0.4) % 1;
     const v = ph > 0 && ph < 0.3 ? 1 - ph / 0.3 : 0;
-    return dim(color, 0.12 + 0.88 * v);
+    return dim(color, 0.1 + 0.9 * v);
   },
-  // 6 — per-key rainbow, slowly cycling
-  colorful: ({ idx, n, t, sp }) => hsl((idx / Math.max(n, 1)) * 360 + t * sp * 20, 90, 58),
-  // 7 — whole-board breathe in the active color
-  breathe: ({ color, t, sp }) => dim(color, 0.15 + 0.85 * (0.5 + 0.5 * Math.sin(t * sp * 2))),
-  // 8 — global hue cycle
-  spectrum: ({ t, sp }) => hsl(t * sp * 60, 90, 58),
-  // 9 — rings radiating outward from center
+
+  // Colorful — each key runs its own hue cycle at a different phase.
+  colorful: ({ idx, t, sp }) => hsl(t * sp * 35 + rand(idx) * 360, 90, 58),
+
+  // Breathe — whole board fades in/out (slowed down per feedback).
+  breathe: ({ color, t, sp }) => dim(color, 0.12 + 0.88 * (0.5 + 0.5 * Math.sin(t * sp * 1.1))),
+
+  // Spectrum — global hue cycle (slowed down per feedback).
+  spectrum: ({ t, sp }) => hsl(t * sp * 30, 90, 58),
+
+  // Outward — rainbow radiating from the center.
   outward: ({ nx, ny, t, sp }) => {
     const d = Math.hypot(nx - 0.5, ny - 0.5);
-    const v = 0.5 + 0.5 * Math.sin(d * 14 - t * sp * 3);
-    return dim(hsl(t * sp * 40 + d * 120, 88, 56), 0.2 + 0.8 * v);
+    return hsl(d * 520 - t * sp * 55, 90, 57);
   },
-  // 10 — hue wave scrolling left→right
-  scrolling: ({ nx, t, sp }) => hsl(nx * 320 + t * sp * 90, 90, 57),
-  // 11 — solid hue band rolling across
-  rolling: ({ nx, t, sp }) => hsl(((((nx - t * sp * 0.25) % 1) + 1) % 1) * 360, 90, 56),
-  // 12 — rotating spiral
+
+  // Scrolling — rainbow cycling top→down.
+  scrolling: ({ ny, t, sp }) => hsl(ny * 360 + t * sp * 45, 90, 57),
+
+  // Rolling — rainbow cycling left→right.
+  rolling: ({ nx, t, sp }) => hsl(nx * 360 + t * sp * 45, 90, 57),
+
+  // Rotating — rotating rainbow spiral ("perfect").
   rotating: ({ nx, ny, t, sp }) => {
     const ang = Math.atan2(ny - 0.5, nx - 0.5);
-    return hsl((ang / Math.PI) * 180 + t * sp * 70, 88, 56);
+    return hsl((ang / Math.PI) * 180 + t * sp * 50, 88, 56);
   },
-  // 13 — expanding ring burst
+
+  // Explode — one row at a time ripples a color across itself (idle approximation).
   explode: ({ nx, ny, t, sp }) => {
-    const d = Math.hypot(nx - 0.5, ny - 0.5);
-    const pos = (t * sp * 0.3) % 1;
-    return dim(hsl(20 + pos * 300, 90, 56), clamp01(1 - Math.abs(d - pos) * 6));
+    const row = Math.round(ny * 5);
+    const active = Math.floor(t * sp * 1.1) % 6;
+    if (row !== active) return OFF;
+    const pos = (t * sp * 1.1) % 1;
+    return dim(hsl((active / 6) * 360, 90, 57), clamp01(1 - Math.abs(nx - pos) * 4));
   },
-  // 14 — comet sweeping left→right
-  launch: ({ nx, t, sp }) => {
-    const pos = (t * sp * 0.2) % 1;
-    return dim(hsl(180 + pos * 120, 88, 56), clamp01(1 - Math.abs(nx - pos) * 6));
+
+  // Launch — a fast ripple washes across the whole board (idle approximation).
+  launch: ({ nx, ny, t, sp }) => {
+    const pos = (t * sp * 0.55) % 1.3; // gap between sweeps
+    const p = nx * 0.7 + ny * 0.3;
+    const v = clamp01(1 - Math.abs(p - pos) * 5);
+    return v > 0.02 ? hsl(180 + pos * 200, 88, 57) : OFF;
   },
-  // 15 — concentric ripples
+
+  // Ripples — like Launch but a smooth continuous wave.
   ripples: ({ nx, ny, t, sp }) => {
     const d = Math.hypot(nx - 0.5, ny - 0.5);
-    const v = 0.5 + 0.5 * Math.sin(d * 10 - t * sp * 3);
-    return dim(hsl(200 + d * 120, 85, 55), 0.2 + 0.8 * v);
+    const v = 0.5 + 0.5 * Math.sin(d * 9 - t * sp * 2.2);
+    return dim(hsl(210 + d * 100, 85, 56), 0.15 + 0.85 * v);
   },
-  // 16 — smooth neon flow
-  flowing: ({ nx, t, sp }) => hsl(200 + 80 * Math.sin(nx * 6 - t * sp * 2), 90, 56),
-  // 17 — rainbow with a brightness pulse
-  pulsating: ({ t, sp }) =>
-    dim(hsl(t * sp * 45, 90, 58), 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(t * sp * 3))),
-  // 18 — diagonal gradient sweep
-  tilt: ({ nx, ny, t, sp }) => hsl((nx + ny) * 160 + t * sp * 70, 88, 56),
+
+  // Flowing — fills row by row top→bottom, left→right within a row.
+  flowing: ({ nx, ny, t, sp }) => {
+    const order = ny * 0.82 + nx * 0.18;
+    const pos = (t * sp * 0.35) % 1.25;
+    const v = clamp01(1 - Math.abs(order - pos) * 4);
+    return v > 0.02 ? hsl(t * sp * 28 + order * 130, 88, 56) : OFF;
+  },
+
+  // Pulsating — rainbow wave from the center out to the sides (horizontal).
+  pulsating: ({ nx, t, sp }) => hsl(Math.abs(nx - 0.5) * 520 - t * sp * 65, 90, 57),
+
+  // Tilt — "\" diagonal bands sweeping across.
+  tilt: ({ nx, ny, t, sp }) => hsl((nx - ny) * 300 + t * sp * 60, 88, 56),
 };
 
 /** Compute the per-key colors for an effect at time `tMs`. */
