@@ -39,28 +39,31 @@ mode = "per_key"
 max_brightness = 255
 color_order = "RGB"
 
-# Built-in onboard animations (the F108 Pro cycles ~19 with FN+\, plus Off).
-# Listed in cycle order — the SonixDriver uses each effect's POSITION as its
-# onboard index. Names/order/params below are PROVISIONAL, seeded from the
-# documented stock modes; confirm exact names, order, and per-effect bytes from
-# the manual or your capture. Speed/brightness use the device's 5 levels (1..5).
+# Built-in onboard animations — CONFIRMED by empirical sweep (forge-cli /
+# f108_effect_select.py --sweep). The device selects an effect by a single
+# command whose byte0 is the effect id (1-based); the driver uses each effect's
+# POSITION here + 1 as that id, so THIS ORDER MUST MATCH the device (id 1..18).
+# speed/brightness are device levels 1..5. color_list is provisional — setting a
+# custom color for a color effect isn't decoded yet (see docs/protocols).
 effects = [
-  { id = "static", name = "Static", params = [{ type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
-  { id = "breathing", name = "Breathing", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
-  { id = "spectrum", name = "Spectrum Cycle", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
-  { id = "wave", name = "Rainbow Wave", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
-  { id = "ripple", name = "Ripple", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
-  { id = "reactive", name = "Reactive", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
-  { id = "raindrop", name = "Raindrop", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
-  { id = "snake", name = "Snake", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
-  { id = "aurora", name = "Aurora", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
-  { id = "neon_stream", name = "Neon Stream", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
-  { id = "scan", name = "Scan", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
-  { id = "stars", name = "Twinkling Stars", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
-  { id = "spiral", name = "Spiral", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }] },
-  { id = "radar", name = "Radar Sweep", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "direction" }] },
-  { id = "flash_away", name = "Flash Away", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 4 }, { type = "color_list", max = 1 }] },
-  { id = "music", name = "Music Rhythm", params = [{ type = "brightness", min = 1, max = 5, default = 4 }] },
+  { id = "static", name = "Static", params = [{ type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
+  { id = "single_on", name = "Single On", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
+  { id = "single_off", name = "Single Off", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
+  { id = "glittering", name = "Glittering", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "falling", name = "Falling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "colorful", name = "Colorful", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "breathe", name = "Breathe", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
+  { id = "spectrum", name = "Spectrum", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "outward", name = "Outward", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "scrolling", name = "Scrolling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "rolling", name = "Rolling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "rotating", name = "Rotating", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "explode", name = "Explode", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "launch", name = "Launch", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "ripples", name = "Ripples", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "flowing", name = "Flowing", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "pulsating", name = "Pulsating", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
+  { id = "tilt", name = "Tilt", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
 ]
 
 [capabilities.layout]
