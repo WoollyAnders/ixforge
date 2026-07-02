@@ -161,6 +161,22 @@ solid red; red **survived unplug/replug**, so the app writes onboard memory. Fin
 `profiles/aula/f108-pro.toml`). Note the earlier capture guess `W=0x4b` was wrong: **W=0x27**,
 `0x4b`=X.
 
+### On-device effects — **DECODED / PROVEN ON HARDWARE** (from `07-capture-effects`)
+Built-in animations are **onboard** and selected by a **single command** (no streaming; the
+board animates on its own MCU and keeps running after the host disconnects — confirmed):
+`04 18` → `04 13 [8]=01` → **effect packet** → `04 f0`, each ACK-read, ~33 ms paced. The effect
+packet is: `[b0=effect_id] ff 00 00 00 00 00 00 [b8=01] [b9=speed] [b10=brightness] … [62..63]=aa 55`.
+- Unlike the static *color save*, this **works standalone** (proven: `tools/f108_effect_select.py 3`
+  selected a reactive keypress effect and it kept running). So `set_effect` is implementable.
+- speed/brightness are device **levels** (seen 0x05 / 0x03; brightness went 03→05 when raised);
+  byte8 and byte2 (direction/variant) toggle for some effects.
+- **Effect id → animation mapping is empirical** — the profile's guessed order is WRONG (id 3 is a
+  reactive "press-to-light", not "spectrum"). Sweep with `f108_effect_select.py --sweep` to map ids
+  → names, then rewrite the profile's `effects` list.
+- **Effect COLOR is not in the packet** and no separate RGB color command appears in `07` — how a
+  color-based effect (e.g. Breathing) gets its color is still OPEN (likely a base-color set we
+  didn't capture, or the effect uses rainbow/random). Decode after the id map.
+
 ### LCD (1.14" TFT)
 - Resolution / orientation / pixel format (RGB565?): *TODO*
 - Upload framing: header, chunking, addressing: *TODO*
