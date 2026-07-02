@@ -38,7 +38,6 @@ export function EffectPanel({
   const brightness = useStore((s) => s.effectBrightness);
   const setSpeed = useStore((s) => s.setEffectSpeed);
   const setBrightness = useStore((s) => s.setEffectBrightness);
-  const apply = useStore((s) => s.applyEffect);
   const activeColor = useStore((s) => s.activeColor);
   const setActiveColor = useStore((s) => s.setActiveColor);
 
@@ -59,7 +58,8 @@ export function EffectPanel({
             screenAspect={screenAspect}
           />
           <Text size="xs" c="dimmed" mt={6}>
-            Live preview · simulated on screen — the device renders the real effect.
+            On-screen preview · selecting an effect or moving a slider applies to the
+            keyboard instantly.
           </Text>
         </div>
       )}
@@ -137,14 +137,10 @@ export function EffectPanel({
               </Group>
             </div>
           )}
-
-          <Button mt="xs" w={200} onClick={() => void apply()}>
-            Apply to keyboard
-          </Button>
         </Stack>
       ) : (
         <Text c="dimmed" size="sm">
-          Select an animation above to preview and apply it.
+          Select an animation above — it applies to the keyboard instantly.
         </Text>
       )}
     </Stack>

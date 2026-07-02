@@ -199,16 +199,21 @@ export const useStore = create<ForgeState>((set, get) => {
       await send(selectedId, { set_zone: { zone: zoneId, color } }, `Set zone "${zoneId}"`);
     },
 
+    // Effects apply live: selecting an effect or moving a slider pushes it to
+    // the device immediately (no Apply button on the Effects tab).
     selectEffect(id) {
       set({ selectedEffectId: id });
+      void get().applyEffect();
     },
 
     setEffectSpeed(n) {
       set({ effectSpeed: n });
+      void get().applyEffect();
     },
 
     setEffectBrightness(n) {
       set({ effectBrightness: n });
+      void get().applyEffect();
     },
 
     async applyEffect() {
