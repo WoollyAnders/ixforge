@@ -1,10 +1,22 @@
-import { Badge, Button, Group, Slider, Stack, Text } from "@mantine/core";
+import { HexColorPicker } from "react-colorful";
+import { Badge, Button, ColorSwatch, Group, Slider, Stack, Text } from "@mantine/core";
 import { useStore } from "../../store/useStore";
 import type { ChassisSpec } from "../../rgb/deviceArt";
 import type { EffectDescriptor, LedLayout } from "../../types/forge";
 import { KeyboardPreview } from "./KeyboardPreview";
 
 const LEVEL_MARKS = [1, 2, 3, 4, 5].map((value) => ({ value }));
+
+const COLOR_PRESETS = [
+  "#22d3ee",
+  "#3b82f6",
+  "#ffffff",
+  "#a855f7",
+  "#ff0040",
+  "#39ff14",
+  "#ffd700",
+  "#000000",
+];
 
 function hasParam(e: EffectDescriptor, type: string): boolean {
   return e.params.some((p) => p.type === type);
@@ -28,6 +40,7 @@ export function EffectPanel({
   const setBrightness = useStore((s) => s.setEffectBrightness);
   const apply = useStore((s) => s.applyEffect);
   const activeColor = useStore((s) => s.activeColor);
+  const setActiveColor = useStore((s) => s.setActiveColor);
 
   if (!rgb) return null;
   const selected = rgb.effects.find((e) => e.id === selectedEffectId);
@@ -107,23 +120,22 @@ export function EffectPanel({
           )}
 
           {hasParam(selected, "color_list") && (
-            <Group gap="xs">
-              <Text size="xs" c="dimmed">
+            <div>
+              <Text size="xs" c="dimmed" mb={4}>
                 Color
               </Text>
-              <span
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 4,
-                  background: activeColor,
-                  border: "1px solid #444",
-                }}
-              />
-              <Text size="xs" c="dimmed">
-                (set in the Custom tab)
-              </Text>
-            </Group>
+              <HexColorPicker color={activeColor} onChange={setActiveColor} />
+              <Group gap={6} mt={6}>
+                {COLOR_PRESETS.map((c) => (
+                  <ColorSwatch
+                    key={c}
+                    color={c}
+                    onClick={() => setActiveColor(c)}
+                    style={{ cursor: "pointer" }}
+                  />
+                ))}
+              </Group>
+            </div>
           )}
 
           <Button mt="xs" w={200} onClick={() => void apply()}>

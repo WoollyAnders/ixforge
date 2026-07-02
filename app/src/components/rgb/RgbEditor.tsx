@@ -4,7 +4,6 @@ import { chassisFor } from "../../rgb/deviceArt";
 import { KeyboardCanvas } from "./KeyboardCanvas";
 import { KeyboardView } from "./KeyboardView";
 import { ColorTools } from "./ColorTools";
-import { SolidPanel } from "./SolidPanel";
 import { EffectPanel } from "./EffectPanel";
 import { PresetBar } from "./PresetBar";
 import { ZoneEditor } from "./ZoneEditor";
@@ -35,16 +34,11 @@ export function RgbEditor() {
     lcd && lcd.kind === "lcd" && lcd.height > 0 ? lcd.width / lcd.height : 16 / 9;
 
   return (
-    <Tabs defaultValue="solid" keepMounted={false}>
+    <Tabs defaultValue={hasEffects ? "effects" : customValue} keepMounted={false}>
       <Tabs.List mb="md">
-        <Tabs.Tab value="solid">Solid</Tabs.Tab>
         {hasEffects && <Tabs.Tab value="effects">Effects</Tabs.Tab>}
         <Tabs.Tab value={customValue}>{isZoned ? "Zones" : "Custom (per-key)"}</Tabs.Tab>
       </Tabs.List>
-
-      <Tabs.Panel value="solid">
-        <SolidPanel layout={rgb.layout} chassis={chassis} screenAspect={screenAspect} />
-      </Tabs.Panel>
 
       {hasEffects && (
         <Tabs.Panel value="effects">
