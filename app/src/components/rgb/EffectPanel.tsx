@@ -8,13 +8,13 @@ import { KeyboardPreview } from "./KeyboardPreview";
 const LEVEL_MARKS = [1, 2, 3, 4, 5].map((value) => ({ value }));
 
 const COLOR_PRESETS = [
-  "#22d3ee",
-  "#3b82f6",
+  "#ff0000",
+  "#00ff00",
+  "#0000ff",
+  "#ffff00",
+  "#00ffff",
+  "#ff00ff",
   "#ffffff",
-  "#a855f7",
-  "#ff0040",
-  "#39ff14",
-  "#ffd700",
   "#000000",
 ];
 

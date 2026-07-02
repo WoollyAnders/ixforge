@@ -1,17 +1,30 @@
-import { HexColorPicker } from "react-colorful";
+import { HexColorPicker, HexColorInput } from "react-colorful";
 import { Button, ColorSwatch, Group, Slider, Stack, Text } from "@mantine/core";
 import { useStore } from "../../store/useStore";
 
+// True RGB primaries/secondaries — these are the exact bytes sent to the board.
 const PRESETS = [
-  "#22d3ee", // brand cyan
-  "#3b82f6", // blue
+  "#ff0000", // red
+  "#00ff00", // green
+  "#0000ff", // blue
+  "#ffff00", // yellow
+  "#00ffff", // cyan
+  "#ff00ff", // magenta
   "#ffffff", // white
-  "#a855f7", // purple
-  "#ff0040", // red
-  "#39ff14", // green
-  "#ffd700", // gold
   "#000000", // off
 ];
+
+const HEX_INPUT_STYLE: React.CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  background: "#141019",
+  color: "#e9e6f0",
+  border: "1px solid #3a3450",
+  borderRadius: 4,
+  padding: "4px 8px",
+  fontFamily: "monospace",
+  textTransform: "uppercase",
+};
 
 export function ColorTools() {
   const activeColor = useStore((s) => s.activeColor);
@@ -28,6 +41,13 @@ export function ColorTools() {
         Color
       </Text>
       <HexColorPicker color={activeColor} onChange={setActiveColor} />
+      <HexColorInput
+        color={activeColor}
+        onChange={setActiveColor}
+        prefixed
+        style={HEX_INPUT_STYLE}
+        aria-label="Hex color"
+      />
       <Group gap={6}>
         {PRESETS.map((c) => (
           <ColorSwatch
