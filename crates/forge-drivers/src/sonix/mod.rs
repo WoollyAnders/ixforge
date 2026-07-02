@@ -237,11 +237,9 @@ const IDLE_GAP: Duration = Duration::from_millis(20);
 
 /// The worker: connect once, then act on the current mode until stopped.
 fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
-    if let Err(e) = connect(transport.as_mut()) {
-        eprintln!("[forge] sonix worker: connect failed ({e:?}); exiting");
+    if connect(transport.as_mut()).is_err() {
         return;
     }
-    eprintln!("[forge] sonix worker: connected, entering loop");
     enum Act {
         Stream(Box<[[u8; REPORT_LEN]; 7]>),
         Effect { id: u8, speed: u8, brightness: u8, color: Option<Color> },
@@ -268,15 +266,13 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
         };
         match act {
             Act::Stream(frame) => {
-                if let Err(e) = stream_once(transport.as_mut(), &frame) {
-                    eprintln!("[forge] sonix worker: stream write failed ({e:?}); exiting");
+                if stream_once(transport.as_mut(), &frame).is_err() {
                     break;
                 }
                 thread::sleep(FRAME_GAP);
             }
             Act::Effect { id, speed, brightness, color } => {
-                if let Err(e) = send_effect(transport.as_mut(), id, speed, brightness, color) {
-                    eprintln!("[forge] sonix worker: effect write failed ({e:?}); exiting");
+                if send_effect(transport.as_mut(), id, speed, brightness, color).is_err() {
                     break;
                 }
                 thread::sleep(FRAME_GAP);
@@ -284,7 +280,6 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
             Act::Idle => thread::sleep(IDLE_GAP),
         }
     }
-    eprintln!("[forge] sonix worker: loop exited");
 }
 
 /// Stateless driver for the Sonix family.

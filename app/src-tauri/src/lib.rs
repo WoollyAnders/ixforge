@@ -51,29 +51,19 @@ fn run_on_session(
     let mut guard = active.lock().map_err(|_| "session lock poisoned".to_string())?;
     let needs_open = guard.as_ref().map(|a| a.id != id).unwrap_or(true);
     if needs_open {
-        eprintln!("[forge] run_on_session: opening session for {id}");
         let backend = HidapiBackend::new().map_err(|e| e.to_string())?;
         let infos = backend.enumerate().map_err(|e| e.to_string())?;
         let matched = match_devices(infos, catalog);
-        eprintln!("[forge] run_on_session: {} matched device(s)", matched.len());
         let dev = matched
             .iter()
             .find(|m| device_id(&m.info).0 == id)
             .ok_or_else(|| format!("device not found: {id}"))?;
         let drivers = forge_drivers::all_drivers();
-        let session = open_matched(&backend, dev, &drivers).map_err(|e| {
-            eprintln!("[forge] run_on_session: open_matched failed: {e}");
-            e.to_string()
-        })?;
-        eprintln!("[forge] run_on_session: session opened for {id}");
+        let session = open_matched(&backend, dev, &drivers).map_err(|e| e.to_string())?;
         *guard = Some(ActiveDevice { id, session }); // drops any previous session/worker
-    } else {
-        eprintln!("[forge] run_on_session: reusing existing session");
     }
     let active = guard.as_mut().expect("session present after open");
-    let r = f(active.session.as_mut()).map_err(|e| e.to_string());
-    eprintln!("[forge] run_on_session: apply result = {r:?}");
-    r
+    f(active.session.as_mut()).map_err(|e| e.to_string())
 }
 
 fn load_catalog() -> ProfileCatalog {
