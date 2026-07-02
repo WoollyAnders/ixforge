@@ -28,6 +28,8 @@ interface ForgeState {
   selectedEffectId: string | null;
   effectSpeed: number;
   effectBrightness: number;
+  effectDirection: number; // 0 = default, 1 = reverse
+  effectRandomize: boolean;
 
   refreshDevices: () => Promise<void>;
   selectDevice: (id: string) => Promise<void>;
@@ -44,6 +46,8 @@ interface ForgeState {
   selectEffect: (id: string) => void;
   setEffectSpeed: (n: number) => void;
   setEffectBrightness: (n: number) => void;
+  setEffectDirection: (n: number) => void;
+  setEffectRandomize: (b: boolean) => void;
   applyEffect: () => Promise<void>;
 
   // Saved per-key presets for the selected device
@@ -94,6 +98,8 @@ export const useStore = create<ForgeState>((set, get) => {
     selectedEffectId: null,
     effectSpeed: 3,
     effectBrightness: 4,
+    effectDirection: 0,
+    effectRandomize: false,
 
     presets: [],
 
@@ -202,7 +208,8 @@ export const useStore = create<ForgeState>((set, get) => {
     // Effects apply live: selecting an effect or moving a slider pushes it to
     // the device immediately (no Apply button on the Effects tab).
     selectEffect(id) {
-      set({ selectedEffectId: id });
+      // Reset per-effect options so a new effect doesn't inherit the previous one's.
+      set({ selectedEffectId: id, effectDirection: 0, effectRandomize: false });
       void get().applyEffect();
     },
 
@@ -216,15 +223,34 @@ export const useStore = create<ForgeState>((set, get) => {
       void get().applyEffect();
     },
 
+    setEffectDirection(n) {
+      set({ effectDirection: n });
+      void get().applyEffect();
+    },
+
+    setEffectRandomize(b) {
+      set({ effectRandomize: b });
+      void get().applyEffect();
+    },
+
     async applyEffect() {
-      const { selectedId, selectedEffectId, effectSpeed, effectBrightness, activeColor } =
-        get();
+      const {
+        selectedId,
+        selectedEffectId,
+        effectSpeed,
+        effectBrightness,
+        effectDirection,
+        effectRandomize,
+        activeColor,
+      } = get();
       if (!selectedId || !selectedEffectId) return;
       const sel: EffectSelection = {
         effect_id: selectedEffectId,
         speed: effectSpeed,
         brightness: effectBrightness,
         colors: [hexToColor(activeColor)],
+        direction: effectDirection,
+        randomize: effectRandomize,
       };
       try {
         await ipc.setEffect(selectedId, sel);

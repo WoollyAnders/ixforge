@@ -1,0 +1,20 @@
+Describing all RGB Animations for the AULA F108 Pro
+
+Static: Solid Color or Static Rainbow | There should be a "Rainbow" option for this effect.
+Single On: The whole keyboard's RGBs are turned off until you press a key. When you press a key, the key softly fades in and then fades back down to turned off (a type of glow effect) | The keys can "glow" a static color however, it should also have a "Randomize Color" option to have the color that it glows to be randomized.
+Single Off: Is the opposite of Single On. The whole keyboard is turned on and when a key is pressed, it softly turns off and then back on. | This effect can also have a static color. It should also have a "Randomize Color" option, where it randomizes the static color of the keyboard and then when a key is pressed, it fades off as normal and then fades back in as a different color than it was previously.
+Glittering: This effect is a randomized static color base like Single off. However, on a random interval other keys suddenly change (there's no transition) the sudden change in color makes the randomized color seem to be glittering. | This effect should have a static effect that flashes a brighter color of the selected color to make it seem like it's glittering.
+Falling: This effect is previewed perfectly. However, it needs a "Colorful" option that will make the rain randomized colors.
+Colorful: Each individual key does it's own spectrum cycle on different timings. | This should have an option where you can program a set of colors that it can cycle through.
+Breathe: Is depicted perfectly the timing is just way faster on the preview.
+Spectrum: Is depicted perfectly the timing is just way faster on the preview.
+Outward: Outward is a spectrum cycle (rainbow) from the center out.
+Scrolling: Is a spectrum cycle (rainbow) from the top down | This should also have an option where you can choose the direction of the cycle (top-down, or down-p)
+Rolling: Is a spectrum cycle (rainbow) same as Scrolling, however, the cycle goes from left to right. | This should also have an option where you can choose the direction of the cycle (left to right, right to left)
+Rotating: Is depicted perfectly in the preview. | This should have the option to have control over the direction of the cycle (clockwise, counter-clockwise)
+Explode: The whole keyboard is turned off. When you press a key, there's a ripple effect that proliferates randomized colors to all the keys in its row. | This should have the option to select a static color for the row ripple effect.
+Launch: This effect is similar to Explode where the keyboard is turned off and the effect happens when you press a key. When you press a key it looks like a fast scan where there's a ripple effect, but not just to the row attached to the key pressed, but rather it quickly fades in a ripple across the entire board. | This should do both "Randomize Color" and "Static"
+Ripples: Is almost exactly the same as Launch but this one is a lot more smooth when it sends out the ripple effect, it looks like a wave. | This should do both "Randomize Color" and "Static".
+Flowing: Lights each row from the top down, left to right. | This should have "Randomize Color" and "Static". Additionally you should be able to choose the direction of the effect. (Left to right, Right to left, top down, down up)
+Pulsating: This looks like a wave of RGB stemming from the center and waving out to the sides. | This should have "Randomize Color" and "Static". Additionally you should be able to choose where the wave is starting from (center, left, or right.)
+Tilt: Just throws "\" shaped waves from left to right. | This should have "Randomize Color" and "Static". Additionally you should be able to choose the direction of the effect. (Left to right, Right to left) and control if its a "\" wave ir a "/" wave.

@@ -1,5 +1,15 @@
 import { HexColorPicker } from "react-colorful";
-import { Badge, Button, ColorSwatch, Group, Slider, Stack, Text } from "@mantine/core";
+import {
+  Badge,
+  Button,
+  ColorSwatch,
+  Group,
+  SegmentedControl,
+  Slider,
+  Stack,
+  Switch,
+  Text,
+} from "@mantine/core";
 import { useStore } from "../../store/useStore";
 import type { ChassisSpec } from "../../rgb/deviceArt";
 import type { EffectDescriptor, LedLayout } from "../../types/forge";
@@ -38,6 +48,10 @@ export function EffectPanel({
   const brightness = useStore((s) => s.effectBrightness);
   const setSpeed = useStore((s) => s.setEffectSpeed);
   const setBrightness = useStore((s) => s.setEffectBrightness);
+  const direction = useStore((s) => s.effectDirection);
+  const setDirection = useStore((s) => s.setEffectDirection);
+  const randomize = useStore((s) => s.effectRandomize);
+  const setRandomize = useStore((s) => s.setEffectRandomize);
   const activeColor = useStore((s) => s.activeColor);
   const setActiveColor = useStore((s) => s.setActiveColor);
 
@@ -119,7 +133,32 @@ export function EffectPanel({
             </div>
           )}
 
-          {hasParam(selected, "color_list") && (
+          {hasParam(selected, "direction") && (
+            <div>
+              <Text size="xs" c="dimmed" mb={4}>
+                Direction
+              </Text>
+              <SegmentedControl
+                size="xs"
+                value={String(direction)}
+                onChange={(v) => setDirection(Number(v))}
+                data={[
+                  { label: "Forward", value: "0" },
+                  { label: "Reverse", value: "1" },
+                ]}
+              />
+            </div>
+          )}
+
+          {hasParam(selected, "randomize") && (
+            <Switch
+              label="Randomize color"
+              checked={randomize}
+              onChange={(e) => setRandomize(e.currentTarget.checked)}
+            />
+          )}
+
+          {hasParam(selected, "color_list") && !randomize && (
             <div>
               <Text size="xs" c="dimmed" mb={4}>
                 Color

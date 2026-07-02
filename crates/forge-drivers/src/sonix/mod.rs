@@ -198,20 +198,29 @@ fn send_effect(
     id: u8,
     speed: u8,
     brightness: u8,
+    direction: u8,
+    randomize: bool,
     color: Option<Color>,
 ) -> Result<(), ForgeError> {
+    let mode = u8::from(randomize); // byte8: 1 = randomize color, 0 = use custom
     cmd_bracket(
         t,
-        &report(&[(0, id), (1, 0xff), (9, speed), (10, brightness), (14, 0xaa), (15, 0x55)]),
+        &report(&[
+            (0, id), (1, 0xff), (8, mode), (9, speed), (10, brightness), (11, direction),
+            (14, 0xaa), (15, 0x55),
+        ]),
     )?;
-    if let Some(c) = color {
-        cmd_bracket(
-            t,
-            &report(&[
-                (0, id), (2, c.r), (3, c.g), (4, c.b), (9, speed), (10, brightness),
-                (14, 0xaa), (15, 0x55),
-            ]),
-        )?;
+    // A custom color only matters when not randomizing.
+    if !randomize {
+        if let Some(c) = color {
+            cmd_bracket(
+                t,
+                &report(&[
+                    (0, id), (2, c.r), (3, c.g), (4, c.b), (9, speed), (10, brightness),
+                    (14, 0xaa), (15, 0x55),
+                ]),
+            )?;
+        }
     }
     Ok(())
 }
@@ -221,7 +230,14 @@ enum Mode {
     /// Continuously stream this per-key frame (live RGB display).
     Streaming(Box<[Color; SLOTS]>),
     /// Select an onboard animation once, then go idle (board animates itself).
-    SelectEffect { id: u8, speed: u8, brightness: u8, color: Option<Color> },
+    SelectEffect {
+        id: u8,
+        speed: u8,
+        brightness: u8,
+        direction: u8,
+        randomize: bool,
+        color: Option<Color>,
+    },
     /// Nothing to drive (fresh session, or an onboard effect is running).
     Idle,
 }
@@ -242,7 +258,7 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
     }
     enum Act {
         Stream(Box<[[u8; REPORT_LEN]; 7]>),
-        Effect { id: u8, speed: u8, brightness: u8, color: Option<Color> },
+        Effect { id: u8, speed: u8, brightness: u8, direction: u8, randomize: bool, color: Option<Color> },
         Idle,
     }
     while shared.running.load(Ordering::Relaxed) {
@@ -251,11 +267,13 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
             let mut mode = shared.mode.lock().unwrap_or_else(|e| e.into_inner());
             match &*mode {
                 Mode::Streaming(frame) => Act::Stream(Box::new(encode_effect_frame(frame))),
-                Mode::SelectEffect { id, speed, brightness, color } => {
+                Mode::SelectEffect { id, speed, brightness, direction, randomize, color } => {
                     let a = Act::Effect {
                         id: *id,
                         speed: *speed,
                         brightness: *brightness,
+                        direction: *direction,
+                        randomize: *randomize,
                         color: *color,
                     };
                     *mode = Mode::Idle; // one-shot; the board keeps animating on its own
@@ -271,8 +289,10 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
                 }
                 thread::sleep(FRAME_GAP);
             }
-            Act::Effect { id, speed, brightness, color } => {
-                if send_effect(transport.as_mut(), id, speed, brightness, color).is_err() {
+            Act::Effect { id, speed, brightness, direction, randomize, color } => {
+                if send_effect(transport.as_mut(), id, speed, brightness, direction, randomize, color)
+                    .is_err()
+                {
                     break;
                 }
                 thread::sleep(FRAME_GAP);
@@ -401,6 +421,8 @@ impl DeviceSession for SonixSession {
         let id = (pos + 1) as u8;
         let speed = sel.speed.unwrap_or(3).clamp(1, 5);
         let brightness = sel.brightness.unwrap_or(5).clamp(1, 5);
+        let direction = sel.direction.unwrap_or(0);
+        let randomize = sel.randomize;
         // Send a base color only for effects that declare a color_list param
         // (color-capable); rainbow/multi effects ignore it.
         let takes_color = effects[pos]
@@ -409,7 +431,7 @@ impl DeviceSession for SonixSession {
             .any(|p| matches!(p, forge_core::EffectParam::ColorList { .. }));
         let color = if takes_color { sel.colors.first().copied() } else { None };
         *self.shared.mode.lock().unwrap_or_else(|e| e.into_inner()) =
-            Mode::SelectEffect { id, speed, brightness, color };
+            Mode::SelectEffect { id, speed, brightness, direction, randomize, color };
         Ok(())
     }
 
@@ -590,6 +612,8 @@ mod tests {
                 speed: Some(4),
                 brightness: Some(2),
                 colors: vec![Color::RED],
+                direction: None,
+                randomize: false,
             })
             .unwrap();
         thread::sleep(Duration::from_millis(150));

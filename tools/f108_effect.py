@@ -89,21 +89,22 @@ def replay(h, ops):
 
 def main():
     argv = sys.argv[1:]
-    def opt(name, d): return argv[argv.index(name)+1] if name in argv else d
-    color = opt("--color", "all")
+    def opt(name, d): return argv[argv.index(name) + 1] if name in argv else d
     secs = float(opt("--secs", "15"))
-    if color == "all":
-        buf = {i: (0xff, 0, 0) for i in ALL_INDICES}
-    elif color == "esc":
-        buf = {0x01: (0xff, 0, 0)}
-    elif color == "off":
+    # positional arg: a hex color (e.g. 00ff00), or "esc" / "off"
+    arg = next((a for a in argv if not a.startswith("--")), "ff0000")
+    a = arg.lower().lstrip("#")
+    if a == "off":
         buf = {}
+    elif a == "esc":
+        buf = {0x01: (0xff, 0, 0)}
     else:
-        sys.exit("--color must be all | esc | off")
+        rgb = (int(a[0:2], 16), int(a[2:4], 16), int(a[4:6], 16))
+        buf = {i: rgb for i in ALL_INDICES}
 
     h = open_device()
     ops = frame_ops(buf)
-    print(f"Connect + stream '{color}' via effect path for ~{secs:.0f}s. WATCH THE BOARD.")
+    print(f"Connect + stream #{arg} via effect path for ~{secs:.0f}s. WATCH THE BOARD.")
     replay(h, CONNECT)
     end = time.time() + secs; n = 0
     try:

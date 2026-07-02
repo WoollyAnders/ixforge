@@ -33,6 +33,12 @@ pub struct EffectSelection {
     pub brightness: Option<u8>,
     #[serde(default)]
     pub colors: Vec<Color>,
+    /// Direction/variant for effects that support it (device byte 11; 0 = default).
+    #[serde(default)]
+    pub direction: Option<u8>,
+    /// Randomize the effect's color instead of using `colors` (device byte 8).
+    #[serde(default)]
+    pub randomize: bool,
 }
 
 /// A macro program: an ordered list of input events plus a repeat policy.

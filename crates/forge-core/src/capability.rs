@@ -119,6 +119,8 @@ pub enum EffectParam {
     Speed { min: u8, max: u8, default: u8 },
     Brightness { min: u8, max: u8, default: u8 },
     Direction,
+    /// The effect can randomize its color(s) instead of using a fixed one.
+    Randomize,
     ColorList { max: u8 },
 }
 

@@ -331,6 +331,8 @@ mod tests {
                 speed: Some(5),
                 brightness: Some(4),
                 colors: vec![Color::GREEN],
+                direction: None,
+                randomize: false,
             })
             .unwrap();
 
@@ -363,6 +365,8 @@ mod tests {
                 speed: None,
                 brightness: None,
                 colors: vec![],
+                direction: None,
+                randomize: false,
             })
             .unwrap_err();
         // No RGB capability at all → NotSupported.

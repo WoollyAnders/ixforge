@@ -43,6 +43,7 @@ export type EffectParam =
   | { type: "speed"; min: number; max: number; default: number }
   | { type: "brightness"; min: number; max: number; default: number }
   | { type: "direction" }
+  | { type: "randomize" }
   | { type: "color_list"; max: number };
 
 export interface EffectDescriptor {
@@ -105,6 +106,8 @@ export interface EffectSelection {
   speed?: number;
   brightness?: number;
   colors: Color[];
+  direction?: number; // 0 = default, 1 = reverse (effects with a "direction" param)
+  randomize?: boolean; // randomize color instead of `colors` ("randomize" param)
 }
 
 export interface DeviceSummary {
