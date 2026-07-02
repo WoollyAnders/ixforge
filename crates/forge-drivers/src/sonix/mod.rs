@@ -175,27 +175,44 @@ fn stream_once(t: &mut dyn HidTransport, frame: &[[u8; REPORT_LEN]; 7]) -> Resul
     Ok(())
 }
 
-/// Select an onboard animation (captured `07`): `04 18` / `04 13[8]=01` /
-/// `[effect_id, ff, …, 01, speed, brightness, …aa55]` / `04 f0`. The board then
-/// runs the effect on its own MCU.
+/// One captured `04 18` / `04 13[8]=01` / <payload> / `04 f0` bracketed command,
+/// each control report ACK-read.
+fn cmd_bracket(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(), ForgeError> {
+    send(t, &report(&[(0, 0x04), (1, 0x18)]))?;
+    ack(t);
+    send(t, &report(&[(0, 0x04), (1, 0x13), (8, 0x01)]))?;
+    ack(t);
+    send(t, payload)?;
+    ack(t);
+    send(t, &report(&[(0, 0x04), (1, 0xf0)]))?;
+    Ok(())
+}
+
+/// Select an onboard animation and (for color-capable effects) set its base
+/// color. Packets decoded from captures `07`/`08`:
+///   select: `[id, ff, .., speed@9, brightness@10, dir@11, .., aa 55 @14-15]`
+///   color:  `[id, 00, R@2, G@3, B@4, .., speed@9, brightness@10, aa 55 @14-15]`
+/// The board then animates on its own MCU. `dir`/randomize are future options.
 fn send_effect(
     t: &mut dyn HidTransport,
     id: u8,
     speed: u8,
     brightness: u8,
+    color: Option<Color>,
 ) -> Result<(), ForgeError> {
-    send(t, &report(&[(0, 0x04), (1, 0x18)]))?;
-    ack(t);
-    send(t, &report(&[(0, 0x04), (1, 0x13), (8, 0x01)]))?;
-    ack(t);
-    send(
+    cmd_bracket(
         t,
-        &report(&[
-            (0, id), (1, 0xff), (8, 0x01), (9, speed), (10, brightness), (62, 0xaa), (63, 0x55),
-        ]),
+        &report(&[(0, id), (1, 0xff), (9, speed), (10, brightness), (14, 0xaa), (15, 0x55)]),
     )?;
-    ack(t);
-    send(t, &report(&[(0, 0x04), (1, 0xf0)]))?; // trailer
+    if let Some(c) = color {
+        cmd_bracket(
+            t,
+            &report(&[
+                (0, id), (2, c.r), (3, c.g), (4, c.b), (9, speed), (10, brightness),
+                (14, 0xaa), (15, 0x55),
+            ]),
+        )?;
+    }
     Ok(())
 }
 
@@ -204,7 +221,7 @@ enum Mode {
     /// Continuously stream this per-key frame (live RGB display).
     Streaming(Box<[Color; SLOTS]>),
     /// Select an onboard animation once, then go idle (board animates itself).
-    SelectEffect { id: u8, speed: u8, brightness: u8 },
+    SelectEffect { id: u8, speed: u8, brightness: u8, color: Option<Color> },
     /// Nothing to drive (fresh session, or an onboard effect is running).
     Idle,
 }
@@ -225,7 +242,7 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
     }
     enum Act {
         Stream(Box<[[u8; REPORT_LEN]; 7]>),
-        Effect(u8, u8, u8),
+        Effect { id: u8, speed: u8, brightness: u8, color: Option<Color> },
         Idle,
     }
     while shared.running.load(Ordering::Relaxed) {
@@ -234,8 +251,13 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
             let mut mode = shared.mode.lock().unwrap_or_else(|e| e.into_inner());
             match &*mode {
                 Mode::Streaming(frame) => Act::Stream(Box::new(encode_effect_frame(frame))),
-                Mode::SelectEffect { id, speed, brightness } => {
-                    let a = Act::Effect(*id, *speed, *brightness);
+                Mode::SelectEffect { id, speed, brightness, color } => {
+                    let a = Act::Effect {
+                        id: *id,
+                        speed: *speed,
+                        brightness: *brightness,
+                        color: *color,
+                    };
                     *mode = Mode::Idle; // one-shot; the board keeps animating on its own
                     a
                 }
@@ -249,8 +271,8 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
                 }
                 thread::sleep(FRAME_GAP);
             }
-            Act::Effect(id, speed, brightness) => {
-                if send_effect(transport.as_mut(), id, speed, brightness).is_err() {
+            Act::Effect { id, speed, brightness, color } => {
+                if send_effect(transport.as_mut(), id, speed, brightness, color).is_err() {
                     break;
                 }
                 thread::sleep(FRAME_GAP);
@@ -379,8 +401,15 @@ impl DeviceSession for SonixSession {
         let id = (pos + 1) as u8;
         let speed = sel.speed.unwrap_or(3).clamp(1, 5);
         let brightness = sel.brightness.unwrap_or(5).clamp(1, 5);
+        // Send a base color only for effects that declare a color_list param
+        // (color-capable); rainbow/multi effects ignore it.
+        let takes_color = effects[pos]
+            .params
+            .iter()
+            .any(|p| matches!(p, forge_core::EffectParam::ColorList { .. }));
+        let color = if takes_color { sel.colors.first().copied() } else { None };
         *self.shared.mode.lock().unwrap_or_else(|e| e.into_inner()) =
-            Mode::SelectEffect { id, speed, brightness };
+            Mode::SelectEffect { id, speed, brightness, color };
         Ok(())
     }
 
@@ -400,8 +429,8 @@ impl Drop for SonixSession {
 mod tests {
     use super::*;
     use forge_core::{
-        DeviceMatcher, DriverRef, EffectDescriptor, EffectSelection, KeyDef, KeyId, Provenance,
-        RgbCapability, RgbMode,
+        DeviceMatcher, DriverRef, EffectDescriptor, EffectParam, EffectSelection, KeyDef, KeyId,
+        Provenance, RgbCapability, RgbMode,
     };
     use forge_transport::MockTransport;
 
@@ -513,7 +542,7 @@ mod tests {
                     .map(|id| EffectDescriptor {
                         id: (*id).into(),
                         name: (*id).into(),
-                        params: vec![],
+                        params: vec![EffectParam::ColorList { max: 1 }],
                     })
                     .collect(),
                 max_brightness: 255,
@@ -554,13 +583,13 @@ mod tests {
         let mut session = SonixDriver
             .open(&esc_profile(), Box::new(mock.clone()))
             .unwrap();
-        // "single_off" is at position 2 → device effect id 3.
+        // "single_off" is at position 2 → device effect id 3; give it a red color.
         session
             .set_effect(&EffectSelection {
                 effect_id: "single_off".into(),
                 speed: Some(4),
                 brightness: Some(2),
-                colors: vec![],
+                colors: vec![Color::RED],
             })
             .unwrap();
         thread::sleep(Duration::from_millis(150));
@@ -568,14 +597,20 @@ mod tests {
 
         let w = mock.feature_writes();
         assert_eq!((w[0][1], w[0][2]), (0x04, 0x18), "connect first");
-        // The effect-select packet: payload byte0 = id 3, byte1 = 0xff (write is
-        // report-id-prefixed, so payload byte N is at write index N+1).
-        let pkt = w
+        // Payload byte N is at write index N+1 (report-id-prefixed).
+        // Select packet: byte0=id 3, byte1=0xff, speed@9, brightness@10, aa55@14-15.
+        let sel = w
             .iter()
             .find(|r| r[1] == 0x03 && r[2] == 0xff)
             .expect("effect-select packet present");
-        assert_eq!(pkt[10], 4, "speed at payload byte9");
-        assert_eq!(pkt[11], 2, "brightness at payload byte10");
-        assert_eq!((pkt[63], pkt[64]), (0xaa, 0x55), "aa55 commit tail");
+        assert_eq!(sel[10], 4, "speed at payload byte9");
+        assert_eq!(sel[11], 2, "brightness at payload byte10");
+        assert_eq!((sel[15], sel[16]), (0xaa, 0x55), "aa55 at payload bytes 14-15");
+        // Color packet: byte0=id 3, byte1=0x00, R@2/G@3/B@4 = ff/00/00.
+        let col = w
+            .iter()
+            .find(|r| r[1] == 0x03 && r[2] == 0x00)
+            .expect("effect-color packet present");
+        assert_eq!((col[3], col[4], col[5]), (0xff, 0x00, 0x00), "red at payload bytes 2-4");
     }
 }

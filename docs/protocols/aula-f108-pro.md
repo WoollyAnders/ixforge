@@ -173,9 +173,16 @@ packet is: `[b0=effect_id] ff 00 00 00 00 00 00 [b8=01] [b9=speed] [b10=brightne
 - **Effect id → animation mapping is empirical** — the profile's guessed order is WRONG (id 3 is a
   reactive "press-to-light", not "spectrum"). Sweep with `f108_effect_select.py --sweep` to map ids
   → names, then rewrite the profile's `effects` list.
-- **Effect COLOR is not in the packet** and no separate RGB color command appears in `07` — how a
-  color-based effect (e.g. Breathing) gets its color is still OPEN (likely a base-color set we
-  didn't capture, or the effect uses rainbow/random). Decode after the id map.
+- **Effect COLOR — DECODED (capture `08`):** a color-based effect's color is set by a *second*
+  bracketed command with the same `[id]` but **byte1 = `00`** (vs `ff` for select) and **RGB at
+  bytes 2/3/4**: `[id, 00, R, G, B, …, speed@9, brightness@10, aa55@14-15]`. So configuring e.g.
+  Breathe-in-green = select packet + this color packet. Rainbow effects (colorful/spectrum/outward/
+  scrolling/rolling/rotating) don't take a color.
+- **Direction = byte 11**, **randomize = byte 8** of the select packet (capture `08`: Rolling
+  toggled byte11 0↔1, Single On toggled byte8 0↔1). These are wired as future EffectSelection
+  options; the driver currently sends direction/randomize = 0 (custom color).
+- **NB:** the `aa 55` commit is at **bytes 14-15** for effect packets (not 62-63 like the RGB
+  frame commit).
 
 ### LCD (1.14" TFT)
 - Resolution / orientation / pixel format (RGB565?): *TODO*
