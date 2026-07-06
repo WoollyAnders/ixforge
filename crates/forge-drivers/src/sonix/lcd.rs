@@ -84,7 +84,7 @@ pub const MAX_FRAMES: usize = 255 / NUM_CHUNKS; // 15
 /// animation) into the 4096-byte chunks streamed on endpoint 0x03.
 pub fn chunks(buf: &[u8]) -> Vec<[u8; CHUNK_LEN]> {
     assert!(
-        !buf.is_empty() && buf.len() % CHUNK_LEN == 0,
+        !buf.is_empty() && buf.len().is_multiple_of(CHUNK_LEN),
         "LCD buffer must be a whole number of {CHUNK_LEN}-byte chunks"
     );
     buf.chunks_exact(CHUNK_LEN)
