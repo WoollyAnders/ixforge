@@ -77,11 +77,17 @@ pub fn encode_frame(src: &[Color], src_w: usize, src_h: usize) -> Vec<u8> {
     buf
 }
 
-/// Split a full frame into the 16 fixed-size chunks streamed on endpoint 0x03.
-pub fn chunks(frame: &[u8]) -> Vec<[u8; CHUNK_LEN]> {
-    assert_eq!(frame.len(), FRAME_LEN, "LCD frame must be exactly {FRAME_LEN} bytes");
-    frame
-        .chunks_exact(CHUNK_LEN)
+/// Max frames the begin command's u8 chunk-count byte can address (16·N ≤ 255).
+pub const MAX_FRAMES: usize = 255 / NUM_CHUNKS; // 15
+
+/// Split a buffer (one 65,536-byte frame, or N of them concatenated for an
+/// animation) into the 4096-byte chunks streamed on endpoint 0x03.
+pub fn chunks(buf: &[u8]) -> Vec<[u8; CHUNK_LEN]> {
+    assert!(
+        !buf.is_empty() && buf.len() % CHUNK_LEN == 0,
+        "LCD buffer must be a whole number of {CHUNK_LEN}-byte chunks"
+    );
+    buf.chunks_exact(CHUNK_LEN)
         .map(|c| {
             let mut a = [0u8; CHUNK_LEN];
             a.copy_from_slice(c);
@@ -90,14 +96,17 @@ pub fn chunks(frame: &[u8]) -> Vec<[u8; CHUNK_LEN]> {
         .collect()
 }
 
-/// The 64-byte "begin image upload" command payload (`04 72 02 …[8]=chunk count`),
-/// sent as a Feature report inside a `04 18` / … bracket before the chunks.
-pub fn begin_upload_payload() -> [u8; 64] {
+/// The 64-byte "begin upload" command (`04 72`). Decoded from captures 13 (static)
+/// and 18 (animated GIF): **byte2 = `0x02` for a single image, `0x07` for an
+/// animation**, and **byte8 = total chunk count = 16 × `frame_count`** (0x10 for
+/// one frame, 0x30 for three). Sent as a Feature report inside a `04 18` bracket.
+pub fn begin_upload_payload(frame_count: usize) -> [u8; 64] {
+    let frames = frame_count.clamp(1, MAX_FRAMES);
     let mut p = [0u8; 64];
     p[0] = 0x04;
     p[1] = 0x72;
-    p[2] = 0x02;
-    p[8] = NUM_CHUNKS as u8; // 0x10 = 16
+    p[2] = if frames > 1 { 0x07 } else { 0x02 };
+    p[8] = (NUM_CHUNKS * frames) as u8;
     p
 }
 
@@ -146,10 +155,15 @@ mod tests {
     }
 
     #[test]
-    fn begin_upload_has_chunk_count() {
-        let p = begin_upload_payload();
-        assert_eq!((p[0], p[1], p[2]), (0x04, 0x72, 0x02));
-        assert_eq!(p[8], 0x10, "16 chunks");
+    fn begin_upload_static_and_animated() {
+        // Static (1 frame): 04 72 02 …[8]=0x10 (capture 13).
+        let s = begin_upload_payload(1);
+        assert_eq!((s[0], s[1], s[2]), (0x04, 0x72, 0x02), "static type");
+        assert_eq!(s[8], 0x10, "16 chunks");
+        // Animated (3 frames): 04 72 07 …[8]=0x30 (capture 18).
+        let a = begin_upload_payload(3);
+        assert_eq!((a[0], a[1], a[2]), (0x04, 0x72, 0x07), "animated type");
+        assert_eq!(a[8], 0x30, "48 chunks = 16*3");
     }
 
     #[test]

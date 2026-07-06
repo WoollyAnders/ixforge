@@ -119,23 +119,33 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "lcd" => {
+            use forge_drivers::sonix::lcd;
             let dev = pick_device(&matched, opts.get("device"))?;
             let path = opts.get("image").ok_or("missing --image <file>")?;
-            let img = image::open(path)
-                .map_err(|e| format!("open image {path:?}: {e}"))?
-                .to_rgb8();
-            let (w, h) = (img.width() as usize, img.height() as usize);
-            let pixels: Vec<Color> = img
-                .pixels()
-                .map(|p| Color { r: p[0], g: p[1], b: p[2] })
-                .collect();
+            let mut frames = load_frames(path)?;
+            // The begin command's chunk count is a u8, so 16*frames <= 255.
+            if frames.len() > lcd::MAX_FRAMES {
+                println!(
+                    "note: {} frames > device max {}, using the first {}",
+                    frames.len(),
+                    lcd::MAX_FRAMES,
+                    lcd::MAX_FRAMES
+                );
+                frames.truncate(lcd::MAX_FRAMES);
+            }
             let (vid, pid) = (dev.profile.matcher.vid, dev.profile.matcher.pid);
+            let (w, h) = (frames[0].0, frames[0].1);
             println!(
-                "uploading {path} ({w}x{h}) to the LCD of {} [{vid:04x}:{pid:04x}]",
+                "uploading {path} ({w}x{h}, {} frame(s)) to the LCD of {} [{vid:04x}:{pid:04x}]",
+                frames.len(),
                 dev.profile.display_name
             );
-            let frame = forge_drivers::sonix::lcd::encode_frame(&pixels, w, h);
-            let log = upload_lcd(vid, pid, &frame)?;
+            // Encode every frame and concatenate; each frame is one 65,536-byte buffer.
+            let mut buffer = Vec::with_capacity(frames.len() * lcd::FRAME_LEN);
+            for (fw, fh, px) in &frames {
+                buffer.extend_from_slice(&lcd::encode_frame(px, *fw, *fh));
+            }
+            let log = upload_lcd(vid, pid, &buffer, frames.len())?;
             print!("{log}");
             println!("ok: LCD image sent");
             Ok(())
@@ -177,7 +187,7 @@ fn hold_secs(opts: &HashMap<String, String>) -> Option<f64> {
 /// raw-USB/WinUSB is needed: the begin-upload commands go to **interface 3** as
 /// Feature reports (each ACK-read, like the RGB path), then the 16 pixel chunks
 /// go to **interface 2** as output reports (its OUT endpoint is `0x03`).
-fn upload_lcd(vid: u16, pid: u16, frame: &[u8]) -> Result<String, String> {
+fn upload_lcd(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<String, String> {
     use forge_drivers::sonix::lcd;
     use hidapi::HidApi;
 
@@ -205,7 +215,7 @@ fn upload_lcd(vid: u16, pid: u16, frame: &[u8]) -> Result<String, String> {
         Ok(())
     };
     feature(&lcd::open_payload())?;
-    feature(&lcd::begin_upload_payload())?;
+    feature(&lcd::begin_upload_payload(frame_count))?;
 
     // Output report = [report id 0][4096-byte chunk] to interface 2. After each
     // chunk, wait for the device's per-chunk ACK on interface 2's IN endpoint
@@ -213,7 +223,7 @@ fn upload_lcd(vid: u16, pid: u16, frame: &[u8]) -> Result<String, String> {
     // (A fixed delay only guessed at it: chunks dropped at "81%" then "93%".)
     let mut n = 0;
     let mut ack = [0u8; 64];
-    for chunk in lcd::chunks(frame) {
+    for chunk in lcd::chunks(buffer) {
         let mut buf = Vec::with_capacity(1 + chunk.len());
         buf.push(0x00); // report id 0
         buf.extend_from_slice(&chunk);
@@ -223,8 +233,43 @@ fn upload_lcd(vid: u16, pid: u16, frame: &[u8]) -> Result<String, String> {
         n += 1;
     }
     Ok(format!(
-        "sent open + begin-upload (iface 3) and {n} pixel chunks (iface 2)\n"
+        "sent open + begin-upload ({frame_count} frame(s), iface 3) and {n} pixel chunks (iface 2)\n"
     ))
+}
+
+/// Load an image's frames as `(width, height, RGB pixels)`. Animated GIFs yield
+/// all frames (for LCD animation); everything else is a single frame.
+fn load_frames(path: &str) -> Result<Vec<(usize, usize, Vec<Color>)>, String> {
+    let to_px = |w: u32, h: u32, raw: &[u8]| -> (usize, usize, Vec<Color>) {
+        let px = raw
+            .chunks_exact(4) // RGBA8
+            .map(|p| Color { r: p[0], g: p[1], b: p[2] })
+            .collect();
+        (w as usize, h as usize, px)
+    };
+    if path.to_ascii_lowercase().ends_with(".gif") {
+        use image::{codecs::gif::GifDecoder, AnimationDecoder};
+        let file = std::fs::File::open(path).map_err(|e| format!("open {path:?}: {e}"))?;
+        let dec = GifDecoder::new(std::io::BufReader::new(file))
+            .map_err(|e| format!("decode gif: {e}"))?;
+        let frames = dec
+            .into_frames()
+            .collect_frames()
+            .map_err(|e| format!("read gif frames: {e}"))?;
+        if !frames.is_empty() {
+            return Ok(frames
+                .iter()
+                .map(|f| {
+                    let img = f.buffer();
+                    to_px(img.width(), img.height(), img.as_raw())
+                })
+                .collect());
+        }
+    }
+    let img = image::open(path)
+        .map_err(|e| format!("open image {path:?}: {e}"))?
+        .to_rgba8();
+    Ok(vec![to_px(img.width(), img.height(), img.as_raw())])
 }
 
 /// Parse a decimal or `0x`-prefixed hex integer.
