@@ -203,6 +203,9 @@ fn send_effect(
     color: Option<Color>,
 ) -> Result<(), ForgeError> {
     let mode = u8::from(randomize); // byte8: 1 = randomize color, 0 = use custom
+    eprintln!(
+        "[fx] send_effect id={id} speed={speed} bri={brightness} dir={direction} rand={randomize} color={color:?}"
+    );
     cmd_bracket(
         t,
         &report(&[
@@ -213,13 +216,15 @@ fn send_effect(
     // A custom color only matters when not randomizing.
     if !randomize {
         if let Some(c) = color {
-            cmd_bracket(
-                t,
-                &report(&[
-                    (0, id), (2, c.r), (3, c.g), (4, c.b), (9, speed), (10, brightness),
-                    (14, 0xaa), (15, 0x55),
-                ]),
-            )?;
+            let pkt = report(&[
+                (0, id), (2, c.r), (3, c.g), (4, c.b), (9, speed), (10, brightness),
+                (14, 0xaa), (15, 0x55),
+            ]);
+            eprintln!(
+                "[fx] color packet bytes 0..16 = {:02x?}",
+                &pkt[0..16]
+            );
+            cmd_bracket(t, &pkt)?;
         }
     }
     Ok(())
