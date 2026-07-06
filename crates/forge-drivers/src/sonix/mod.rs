@@ -190,7 +190,9 @@ fn cmd_bracket(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(
 
 /// Select/configure an onboard animation in **one** bracketed command. Decoded
 /// from capture `11` (AULA setting Breathe to red/green/cyan):
-///   `[id, R@1, G@2, B@3, .., randomize@8, speed@9, brightness@10, direction@11, aa 55 @14-15]`
+///   `[id, R@1, G@2, B@3, .., randomize@8, brightness@9, speed@10, direction@11, aa 55 @14-15]`
+/// NB: byte9 = brightness, byte10 = speed (confirmed on hardware — the two were
+/// initially swapped, which made the Speed slider change brightness).
 /// The color is plain **RGB at bytes 1/2/3** (red=`ff 00 00`, green=`00 ff 00`,
 /// cyan=`00 ff ff`). When `randomize`/colorful is set (byte8=1) the board runs a
 /// rainbow and ignores the RGB. There is no separate "select" vs "color" packet:
@@ -211,12 +213,11 @@ fn send_effect(
 ) -> Result<(), ForgeError> {
     let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom color
     let c = color.unwrap_or(Color::BLACK); // RGB ignored by the board when randomize
-    eprintln!("[fx] id={id} speed={speed} bri={brightness} dir={direction} rand={mode} rgb={c:?}");
     cmd_bracket(
         t,
         &report(&[
             (0, id), (1, c.r), (2, c.g), (3, c.b), (8, mode),
-            (9, speed), (10, brightness), (11, direction), (14, 0xaa), (15, 0x55),
+            (9, brightness), (10, speed), (11, direction), (14, 0xaa), (15, 0x55),
         ]),
     )?;
     Ok(())
@@ -667,8 +668,8 @@ mod tests {
             .expect("effect packet present");
         assert_eq!((pkt[2], pkt[3], pkt[4]), (0xff, 0x00, 0x00), "red RGB at bytes 1-3");
         assert_eq!(pkt[9], 0x00, "randomize off at byte8");
-        assert_eq!(pkt[10], 4, "speed at byte9");
-        assert_eq!(pkt[11], 2, "brightness at byte10");
+        assert_eq!(pkt[10], 2, "brightness at byte9");
+        assert_eq!(pkt[11], 4, "speed at byte10");
     }
 
     #[test]
