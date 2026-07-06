@@ -4,15 +4,17 @@ Snapshot of where the project stands and what's next. (Companion to the per-devi
 protocol notes in [docs/protocols/](protocols/) and the contributor guide in
 [CONTRIBUTING.md](../CONTRIBUTING.md).)
 
-> **Resuming after a PC/session restart?** Do the capture below — it's the one gating
-> step. Everything else is built (see "What's built"). When the capture is done, hand
-> the files back and the placeholder protocol becomes real.
+> **Status: the entire RGB chapter is DECODED, PROVEN ON HARDWARE, and shipped** — per-key
+> color, all 18 onboard effects, and per-effect color (RGB) / speed / brightness / direction /
+> rainbow, all driven live from the GUI. Protocol in [docs/protocols/aula-f108-pro.md](protocols/aula-f108-pro.md).
+> **The next chapter is the LCD screen** — same capture→decode method, playbook below.
 
-## ▶ Resume here after restart — capture the protocol (Wireshark + USBPcap)
+## ▶ Next capture: the LCD screen (Wireshark + USBPcap)
 
 The F108 Pro uses a **proprietary Sonix protocol** (VID `0x0C45`; it is **not** VIA, verified
 via usevia.app), so we capture the official software's USB traffic and decode it. Do this on
-**native Windows** with the keyboard connected **wired (USB-C)**.
+**native Windows** with the keyboard connected **wired (USB-C)**. This same method decoded all of
+RGB; the LCD is expected to be the largest protocol (image framing, chunking, addressing).
 
 **1. Install (once).**
 - Install **Wireshark** (Windows 64-bit) from wireshark.org — keep the defaults (Wireshark, TShark, tools).
@@ -32,15 +34,13 @@ the capture on the right `USBPcapN`, make **exactly one** change in the app, sto
 
 | File | Change to make in the official app |
 |---|---|
-| `01-init` | just launch / connect (baseline handshake) |
-| `02-esc-red` | set only **Esc** → red |
-| `03-esc-green` | set **Esc** → green |
-| `04-key1-red` | set the **next** key (e.g. `1`) → red |
-| `05-all-blue` | set **all** keys → blue |
-| `06-brightness` | change brightness only |
-| `07-effect` | pick one built-in effect |
-| `08-lcd-image` *(later)* | upload an image to the screen |
-| `09-macro` *(later)* | record/assign a macro |
+| `13-lcd-image` | upload one **image** to the LCD screen |
+| `14-lcd-image2` | upload a **different** image (diff reveals header vs pixel data) |
+| `15-lcd-text` *(if supported)* | set the screen to a **text** / clock mode |
+| `16-lcd-monitor` *(if supported)* | enable the **system-monitor** display |
+
+Captures `01`–`11` (RGB init/keys/effects/effect-color) are already decoded and done. LCD is next;
+two different images help separate the fixed header/addressing from the pixel payload.
 
 **4. Hand it back.** Save the `.pcapng` files under **`captures/aula-f108-pro/`** in the repo
 (that folder is git-ignored, so they stay local — perfect for clean-room). To make decoding fast,
@@ -70,24 +70,21 @@ captures, replace the placeholder `sonix` encoder, add byte-exact tests, and fil
   **global brightness**, **named presets** (save/apply/delete), **live hotplug** device list.
 - Runs in a browser with a **mock** F108 Pro + a mock zoned strip (no hardware needed).
 
-## ⚠️ The one thing that's still placeholder: the real protocol
+## RGB: real and proven (no longer placeholder)
 
-`set_rgb`/`set_effect` currently emit **structurally-correct placeholder bytes**, and the
-F108 Pro profile's VID/PID, `led_index`, report IDs/opcodes, and color order are `TODO`.
-Nothing actually lights up on hardware yet — that's **gated on a USB capture**.
-
-- **The F108 Pro is NOT VIA-compatible** (verified: usevia.app does not see it) — it uses a
-  **proprietary Sonix protocol** (VID `0x0C45`). So the path is capture + decode.
-- **Next action:** the Wireshark + USBPcap capture playbook at the top of this file. Once the
-  captures are in, the placeholder `sonix` encoder becomes the real one + byte-exact golden
-  tests + real profile values.
+The `sonix` driver drives real hardware. Decoded + working: connect handshake, the `04 20`
+live-display stream (continuous re-stream loop holds color), the full 104-key `led_index` map,
+and the onboard effect command — one bracketed packet
+`[id, R@1, G@2, B@3, randomize@8, brightness@9, speed@10, direction@11, .., aa55@14-15]`
+(color is plain RGB at bytes 1/2/3; speed higher = faster; byte8=1 = rainbow/random). Byte-exact
+golden tests cover it. VID `0x0C45` / PID `0x800A`, interface 3, 64-byte Feature reports, report id 0.
 
 ## Roadmap
 
-- **M1 — RGB breadth:** UI/persistence/hotplug/zones/brightness **done**; real RGB is the only
-  piece left, blocked on the capture above.
-- **M2 — Macros:** recorder/editor + on-device write (needs a macro capture).
-- **M3 — LCD:** push image/text/system-monitor to the 1.14″ screen (needs a capture; hardest).
+- **M1 — RGB breadth:** ✅ **DONE** — UI/persistence/hotplug/zones/brightness + real per-key color,
+  18 effects, and effect color/speed/brightness/direction/rainbow, all proven on hardware.
+- **M2 — Macros:** recorder/editor + on-device write (needs a macro capture: record/assign one macro).
+- **M3 — LCD:** push image/text/system-monitor to the 1.14″ screen (needs the capture above; hardest).
 
 ## Deferred (non-blocking)
 
