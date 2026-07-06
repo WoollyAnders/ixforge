@@ -134,9 +134,8 @@ fn run() -> Result<(), String> {
                 "uploading {path} ({w}x{h}) to the LCD of {} [{vid:04x}:{pid:04x}]",
                 dev.profile.display_name
             );
-            // The LCD uses a raw endpoint (nusb), not the HID session, so this
-            // does not go through open_matched.
-            let log = forge_drivers::sonix::lcd::upload_image(vid, pid, &pixels, w, h)?;
+            let frame = forge_drivers::sonix::lcd::encode_frame(&pixels, w, h);
+            let log = upload_lcd(vid, pid, &frame)?;
             print!("{log}");
             println!("ok: LCD image sent");
             Ok(())
@@ -172,6 +171,55 @@ fn apply(
 /// Parse an optional `--hold <secs>` (re-stream duration).
 fn hold_secs(opts: &HashMap<String, String>) -> Option<f64> {
     opts.get("hold").and_then(|s| s.parse().ok())
+}
+
+/// Upload a full LCD frame over HID. The LCD is a HID interface (HidUsb), so no
+/// raw-USB/WinUSB is needed: the begin-upload commands go to **interface 3** as
+/// Feature reports (each ACK-read, like the RGB path), then the 16 pixel chunks
+/// go to **interface 2** as output reports (its OUT endpoint is `0x03`).
+fn upload_lcd(vid: u16, pid: u16, frame: &[u8]) -> Result<String, String> {
+    use forge_drivers::sonix::lcd;
+    use hidapi::HidApi;
+
+    let api = HidApi::new().map_err(|e| e.to_string())?;
+    let open_iface = |iface: i32| -> Result<hidapi::HidDevice, String> {
+        api.device_list()
+            .find(|d| {
+                d.vendor_id() == vid && d.product_id() == pid && d.interface_number() == iface
+            })
+            .ok_or_else(|| format!("HID interface {iface} of {vid:04x}:{pid:04x} not found"))?
+            .open_device(&api)
+            .map_err(|e| format!("open interface {iface}: {e}"))
+    };
+    let cmd = open_iface(3)?; // begin-upload commands
+    let data = open_iface(2)?; // pixel chunks (its OUT endpoint is 0x03)
+
+    // Feature report = [report id 0][64-byte payload]; drain the ACK afterward.
+    let feature = |payload: &[u8; 64]| -> Result<(), String> {
+        let mut buf = [0u8; 65];
+        buf[1..].copy_from_slice(payload);
+        cmd.send_feature_report(&buf)
+            .map_err(|e| format!("command SET_REPORT: {e}"))?;
+        let mut ack = [0u8; 65];
+        let _ = cmd.get_feature_report(&mut ack); // best-effort lock-step drain
+        Ok(())
+    };
+    feature(&lcd::open_payload())?;
+    feature(&lcd::begin_upload_payload())?;
+
+    // Output report = [report id 0][4096-byte chunk] to interface 2.
+    let mut n = 0;
+    for chunk in lcd::chunks(frame) {
+        let mut buf = Vec::with_capacity(1 + chunk.len());
+        buf.push(0x00); // report id 0
+        buf.extend_from_slice(&chunk);
+        data.write(&buf)
+            .map_err(|e| format!("write chunk {n}: {e}"))?;
+        n += 1;
+    }
+    Ok(format!(
+        "sent open + begin-upload (iface 3) and {n} pixel chunks (iface 2)\n"
+    ))
 }
 
 /// Parse a decimal or `0x`-prefixed hex integer.

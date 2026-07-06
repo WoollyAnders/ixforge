@@ -11,11 +11,6 @@ authors.workspace = true
 forge-core = { path = "../forge-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# Raw USB for the LCD image path (interrupt OUT ep 0x03) — HID Feature reports
-# can't carry the 4 KiB chunks. Pure-Rust + permissive (Apache-2.0/MIT), unlike
-# libusb/rusb (LGPL), so it satisfies `cargo deny`.
-nusb = "0.1"
-futures-lite = "2"
 
 [dev-dependencies]
 # MockTransport for golden-byte tests; no real HID backend needed.
