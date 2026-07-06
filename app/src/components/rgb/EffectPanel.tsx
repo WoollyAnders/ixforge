@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { HexColorPicker } from "react-colorful";
 import {
   Badge,
@@ -63,6 +64,18 @@ export function EffectPanel({
   const activeColor = useStore((s) => s.activeColor);
   const setActiveColor = useStore((s) => s.setActiveColor);
   const setEffectColor = useStore((s) => s.setEffectColor);
+
+  // The picker fires onChange on every click and every drag tick. Update the
+  // color live (preview + swatch) immediately, but debounce the device apply so
+  // a drag doesn't flood the board — and, unlike the picker's onChangeEnd, this
+  // still fires for a plain click (onChangeEnd can skip clicks). ~90 ms feels
+  // instant while collapsing a whole drag into one apply.
+  const colorApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pickColor = (hex: string) => {
+    setActiveColor(hex);
+    if (colorApplyTimer.current) clearTimeout(colorApplyTimer.current);
+    colorApplyTimer.current = setTimeout(() => void applyEffect(), 90);
+  };
 
   if (!rgb) return null;
   const selected = rgb.effects.find((e) => e.id === selectedEffectId);
@@ -181,15 +194,7 @@ export function EffectPanel({
               <Text size="xs" c="dimmed" mb={4}>
                 Color
               </Text>
-              {/* Drag updates the color live (preview + swatch); the board apply
-                  is deferred to release via the picker's own onChangeEnd, which
-                  fires with the final committed color (a wrapper onPointerUp races
-                  ahead of that commit and sends the previous color). */}
-              <HexColorPicker
-                color={activeColor}
-                onChange={setActiveColor}
-                onChangeEnd={setEffectColor}
-              />
+              <HexColorPicker color={activeColor} onChange={pickColor} />
               <Group gap={6} mt={6}>
                 {COLOR_PRESETS.map((c) => (
                   <ColorSwatch
