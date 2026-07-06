@@ -33,6 +33,11 @@ use forge_core::{
 
 use crate::framing::{resolve_zone_keys, rgb_layout};
 
+// Image framing for the 1.14" LCD. Consumed by the (upcoming) raw-USB transport;
+// allow dead_code until that lands so the offline-tested encoder can ship first.
+#[allow(dead_code)]
+mod lcd;
+
 const REPORT_ID: u8 = 0x00;
 const REPORT_LEN: usize = 64;
 const SLOTS: usize = 128; // color buffer is indexed by led_index (== frame slot)
@@ -208,6 +213,9 @@ fn cmd_bracket(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(
 /// with byte1=0xff, i.e. R=255, which forced red on every re-select). The board
 /// then animates on its own MCU. `color_only` is accepted for API compatibility
 /// but no longer changes the wire format.
+// `_color_only` is a vestigial arg (see EffectSelection.color_only) — kept until
+// that field is removed in a dedicated cleanup; it pushes the count to 8.
+#[allow(clippy::too_many_arguments)]
 fn send_effect(
     t: &mut dyn HidTransport,
     id: u8,
