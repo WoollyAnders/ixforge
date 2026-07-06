@@ -188,11 +188,35 @@ fn cmd_bracket(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(
     Ok(())
 }
 
-/// Select an onboard animation and (for color-capable effects) set its base
-/// color. Packets decoded from captures `07`/`08`:
-///   select: `[id, ff, .., speed@9, brightness@10, dir@11, .., aa 55 @14-15]`
-///   color:  `[id, 00, R@2, G@3, B@4, .., speed@9, brightness@10, aa 55 @14-15]`
-/// The board then animates on its own MCU. `dir`/randomize are future options.
+/// The onboard effect color is a **hue**, not RGB. Decoded from capture `10`
+/// (AULA setting Breathe to known colors): the color packet is
+/// `[id, hue@1, sat@2=00, val@3=ff, .., aa 55 @14-15]`, where `hue` is the color
+/// wheel angle scaled `deg * 255/360`. Anchors: red 0°→`0x00`, cyan 180°→`0x7e`,
+/// blue 240°→`0xaa`. (The per-key `04 20` path is still true RGB; only these
+/// onboard effect colors are hue-based — which is why feeding the board RGB made
+/// it snap to a primary: it read our bytes as a bogus hue.)
+fn hue_byte(c: Color) -> u8 {
+    let (r, g, b) = (c.r as f32, c.g as f32, c.b as f32);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    if d == 0.0 {
+        return 0; // grey/white/black: no hue → treat as red (0°)
+    }
+    let h = if max == r {
+        60.0 * ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    (h * 255.0 / 360.0).round() as u8
+}
+
+/// Select an onboard animation and (for color-capable effects) set its hue.
+///   select: `[id, ff, .., byte8=rand, speed@9, brightness@10, dir@11, aa 55 @14-15]`
+///   color:  `[id, hue@1, 00@2, ff@3, .., speed@9, brightness@10, aa 55 @14-15]`
+/// The board then animates on its own MCU.
 fn send_effect(
     t: &mut dyn HidTransport,
     id: u8,
@@ -207,9 +231,6 @@ fn send_effect(
     // board resets a color effect to its default on re-select, so a select before
     // every live color tweak would wipe the tweak (matches the official app,
     // which selects once then streams color-only packets).
-    eprintln!(
-        "[fx] id={id} speed={speed} bri={brightness} dir={direction} rand={randomize} color_only={color_only} color={color:?}"
-    );
     let has_color = !randomize && color.is_some();
     if !color_only {
         let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom
@@ -229,14 +250,16 @@ fn send_effect(
             thread::sleep(Duration::from_millis(200));
         }
     }
-    // A custom color only matters when not randomizing (byte1 = 00 = color packet).
-    // Effect-color order is RBG (byte2=R, byte3=B, byte4=G) — the effect path is
-    // NOT the RGB of the per-key path (proven on hardware: sending RGB turned a
-    // purple pick green, and capture 08's second color was blue, not green).
+    // A custom color only matters when not randomizing. Hue in byte1, saturation
+    // pinned full (byte2=0), value full (byte3=0xff); the effect's brightness
+    // level dims it. The value byte (0xff) also distinguishes this from a select
+    // packet (whose byte3 is 0), even when a hue happens to land on 0xff.
     if has_color {
         if let Some(c) = color {
+            let hue = hue_byte(c);
+            eprintln!("[fx] id={id} color_only={color_only} rgb={c:?} -> hue=0x{hue:02x}");
             let pkt = report(&[
-                (0, id), (2, c.r), (3, c.b), (4, c.g), (9, speed), (10, brightness),
+                (0, id), (1, hue), (2, 0x00), (3, 0xff), (9, speed), (10, brightness),
                 (14, 0xaa), (15, 0x55),
             ]);
             cmd_bracket(t, &pkt)?;
@@ -690,12 +713,15 @@ mod tests {
         assert_eq!(sel[10], 4, "speed at payload byte9");
         assert_eq!(sel[11], 2, "brightness at payload byte10");
         assert_eq!((sel[15], sel[16]), (0xaa, 0x55), "aa55 at payload bytes 14-15");
-        // Color packet: byte0=id 3, byte1=0x00, R@2/G@3/B@4 = ff/00/00.
+        // Color packet: byte0=id 3, hue@1, sat@2=00, val@3=0xff. Red = hue 0.
+        // (Identified by the value byte 0xff at payload byte3 = write index 4.)
         let col = w
             .iter()
-            .find(|r| r[1] == 0x03 && r[2] == 0x00)
+            .find(|r| r[1] == 0x03 && r[4] == 0xff)
             .expect("effect-color packet present");
-        assert_eq!((col[3], col[4], col[5]), (0xff, 0x00, 0x00), "red at payload bytes 2-4");
+        assert_eq!(col[2], 0x00, "red hue = 0 at payload byte1");
+        assert_eq!(col[3], 0x00, "saturation full (byte2=0)");
+        assert_eq!(col[4], 0xff, "value full (byte3=0xff)");
     }
 
     #[test]
@@ -721,17 +747,18 @@ mod tests {
         drop(session);
 
         let w = mock.feature_writes();
-        // No select packet (byte0=id 3, byte1=0xff) may be present.
+        // No select packet (byte0=id 3, byte1=0xff with value byte 0 at byte3) present.
         assert!(
-            !w.iter().any(|r| r[1] == 0x03 && r[2] == 0xff),
+            !w.iter().any(|r| r[1] == 0x03 && r[2] == 0xff && r[4] == 0x00),
             "color_only must not re-select the effect"
         );
-        // The color packet (byte1=0x00) carries the exact purple, unquantized,
-        // in the effect path's RBG order (R@2, B@3, G@4): purple r=b5,g=00,b=ff.
+        // The color packet encodes purple as a hue: (181,0,255) → 282.6° → 0xc8,
+        // saturation full (byte2=0), value full (byte3=0xff).
         let col = w
             .iter()
-            .find(|r| r[1] == 0x03 && r[2] == 0x00)
+            .find(|r| r[1] == 0x03 && r[4] == 0xff)
             .expect("color packet present");
-        assert_eq!((col[3], col[4], col[5]), (0xb5, 0xff, 0x00), "purple in RBG (R,B,G)");
+        assert_eq!(col[2], 0xc8, "purple hue at payload byte1");
+        assert_eq!((col[3], col[4]), (0x00, 0xff), "sat full, value full");
     }
 }
