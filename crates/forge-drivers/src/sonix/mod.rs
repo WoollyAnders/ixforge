@@ -210,6 +210,7 @@ fn send_effect(
     eprintln!(
         "[fx] id={id} speed={speed} bri={brightness} dir={direction} rand={randomize} color_only={color_only} color={color:?}"
     );
+    let has_color = !randomize && color.is_some();
     if !color_only {
         let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom
         cmd_bracket(
@@ -219,12 +220,23 @@ fn send_effect(
                 (14, 0xaa), (15, 0x55),
             ]),
         )?;
+        // The board drops a color packet that arrives right after a select (the
+        // select re-inits the effect to its default color first). Give it a beat
+        // before the color so the color latches — the official app has a similar
+        // human-scale gap. No-op under test.
+        #[cfg(not(test))]
+        if has_color {
+            thread::sleep(Duration::from_millis(200));
+        }
     }
     // A custom color only matters when not randomizing (byte1 = 00 = color packet).
-    if !randomize {
+    // Effect-color order is RBG (byte2=R, byte3=B, byte4=G) — the effect path is
+    // NOT the RGB of the per-key path (proven on hardware: sending RGB turned a
+    // purple pick green, and capture 08's second color was blue, not green).
+    if has_color {
         if let Some(c) = color {
             let pkt = report(&[
-                (0, id), (2, c.r), (3, c.g), (4, c.b), (9, speed), (10, brightness),
+                (0, id), (2, c.r), (3, c.b), (4, c.g), (9, speed), (10, brightness),
                 (14, 0xaa), (15, 0x55),
             ]);
             cmd_bracket(t, &pkt)?;
@@ -714,11 +726,12 @@ mod tests {
             !w.iter().any(|r| r[1] == 0x03 && r[2] == 0xff),
             "color_only must not re-select the effect"
         );
-        // The color packet (byte1=0x00) carries the exact purple, unquantized.
+        // The color packet (byte1=0x00) carries the exact purple, unquantized,
+        // in the effect path's RBG order (R@2, B@3, G@4): purple r=b5,g=00,b=ff.
         let col = w
             .iter()
             .find(|r| r[1] == 0x03 && r[2] == 0x00)
             .expect("color packet present");
-        assert_eq!((col[3], col[4], col[5]), (0xb5, 0x00, 0xff), "purple passes through");
+        assert_eq!((col[3], col[4], col[5]), (0xb5, 0xff, 0x00), "purple in RBG (R,B,G)");
     }
 }
