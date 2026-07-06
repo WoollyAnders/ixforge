@@ -119,11 +119,18 @@ fn encode_effect_frame(buffer: &[Color; SLOTS]) -> [[u8; REPORT_LEN]; 7] {
     reports
 }
 
-/// Pace between reports. The device drains control transfers slowly (~33 ms in
-/// the capture); streaming faster desyncs the frame. No-op under `cfg(test)`.
-fn pace() {
+/// The device drains control transfers slowly; streaming faster than ~33 ms
+/// desyncs the LED frame (decoded from the capture), so the **streaming** path
+/// keeps that cadence. The one-shot **effect-select** bracket is much lighter and
+/// tolerates a tighter pace, which keeps the Speed/Brightness sliders feeling
+/// live while dragging instead of lagging ~230 ms behind each step.
+const STREAM_PACE_MS: u64 = 33;
+const EFFECT_PACE_MS: u64 = 10;
+
+/// Pace between reports, `ms` apart. No-op under `cfg(test)`.
+fn pace(_ms: u64) {
     #[cfg(not(test))]
-    thread::sleep(Duration::from_millis(33));
+    thread::sleep(Duration::from_millis(_ms));
 }
 
 /// Gap between full re-streamed frames. Small: after a keypress makes the board
@@ -132,30 +139,30 @@ fn pace() {
 const FRAME_GAP: Duration = Duration::from_millis(8);
 
 /// Send one 64-byte payload as a Feature report (report ID 0 prefixed), + pace.
-fn send(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(), ForgeError> {
+fn send(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN], pace_ms: u64) -> Result<(), ForgeError> {
     let mut buf = [0u8; REPORT_LEN + 1];
     buf[0] = REPORT_ID;
     buf[1..].copy_from_slice(payload);
     t.send_feature_report(&buf)?;
-    pace();
+    pace(pace_ms);
     Ok(())
 }
 
 /// Drain the device's ACK after a control report (the lock-step handshake).
 /// Best-effort: the bytes aren't needed and a read hiccup must not abort, but
 /// skipping it entirely would stall the control pipe on hardware.
-fn ack(t: &mut dyn HidTransport) {
+fn ack(t: &mut dyn HidTransport, pace_ms: u64) {
     let mut buf = [0u8; REPORT_LEN + 1];
     buf[0] = REPORT_ID;
     let _ = t.get_feature_report(&mut buf);
-    pace();
+    pace(pace_ms);
 }
 
-/// One-time connect handshake.
+/// One-time connect handshake (keep the safe streaming cadence).
 fn connect(t: &mut dyn HidTransport) -> Result<(), ForgeError> {
     for rep in connect_reports() {
-        send(t, &rep)?;
-        ack(t);
+        send(t, &rep, STREAM_PACE_MS)?;
+        ack(t, STREAM_PACE_MS);
     }
     Ok(())
 }
@@ -163,28 +170,28 @@ fn connect(t: &mut dyn HidTransport) -> Result<(), ForgeError> {
 /// Stream one effect frame: preamble (+ACK), 7 data reports, terminator, and
 /// heartbeats, matching the captured cadence.
 fn stream_once(t: &mut dyn HidTransport, frame: &[[u8; REPORT_LEN]; 7]) -> Result<(), ForgeError> {
-    send(t, &effect_preamble())?;
-    ack(t);
+    send(t, &effect_preamble(), STREAM_PACE_MS)?;
+    ack(t, STREAM_PACE_MS);
     for rep in frame {
-        send(t, rep)?;
+        send(t, rep, STREAM_PACE_MS)?;
     }
-    send(t, &report(&[]))?; // all-zero terminator
-    send(t, &heartbeat())?;
-    ack(t);
-    send(t, &heartbeat())?;
+    send(t, &report(&[]), STREAM_PACE_MS)?; // all-zero terminator
+    send(t, &heartbeat(), STREAM_PACE_MS)?;
+    ack(t, STREAM_PACE_MS);
+    send(t, &heartbeat(), STREAM_PACE_MS)?;
     Ok(())
 }
 
 /// One captured `04 18` / `04 13[8]=01` / <payload> / `04 f0` bracketed command,
-/// each control report ACK-read.
+/// each control report ACK-read. Uses the tighter effect pace for live sliders.
 fn cmd_bracket(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(), ForgeError> {
-    send(t, &report(&[(0, 0x04), (1, 0x18)]))?;
-    ack(t);
-    send(t, &report(&[(0, 0x04), (1, 0x13), (8, 0x01)]))?;
-    ack(t);
-    send(t, payload)?;
-    ack(t);
-    send(t, &report(&[(0, 0x04), (1, 0xf0)]))?;
+    send(t, &report(&[(0, 0x04), (1, 0x18)]), EFFECT_PACE_MS)?;
+    ack(t, EFFECT_PACE_MS);
+    send(t, &report(&[(0, 0x04), (1, 0x13), (8, 0x01)]), EFFECT_PACE_MS)?;
+    ack(t, EFFECT_PACE_MS);
+    send(t, payload, EFFECT_PACE_MS)?;
+    ack(t, EFFECT_PACE_MS);
+    send(t, &report(&[(0, 0x04), (1, 0xf0)]), EFFECT_PACE_MS)?;
     Ok(())
 }
 
@@ -213,16 +220,13 @@ fn send_effect(
 ) -> Result<(), ForgeError> {
     let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom color
     let c = color.unwrap_or(Color::BLACK); // RGB ignored by the board when randomize
-    // The device speed byte is INVERTED — a higher byte animates slower — so a UI
-    // speed of 5 (fastest) maps to byte 1. Speed is clamped 1..5, so 6 - speed
-    // stays in range. (Confirmed on hardware.)
-    let speed_byte = 6u8.saturating_sub(speed);
-    eprintln!("[fx] ui_speed={speed} -> speed_byte={speed_byte}  bri={brightness} rand={mode}");
+    // byte10 = speed, higher = faster (confirmed on hardware), so it maps straight
+    // from the 1..5 slider. byte9 = brightness.
     cmd_bracket(
         t,
         &report(&[
             (0, id), (1, c.r), (2, c.g), (3, c.b), (8, mode),
-            (9, brightness), (10, speed_byte), (11, direction), (14, 0xaa), (15, 0x55),
+            (9, brightness), (10, speed), (11, direction), (14, 0xaa), (15, 0x55),
         ]),
     )?;
     Ok(())
@@ -674,7 +678,7 @@ mod tests {
         assert_eq!((pkt[2], pkt[3], pkt[4]), (0xff, 0x00, 0x00), "red RGB at bytes 1-3");
         assert_eq!(pkt[9], 0x00, "randomize off at byte8");
         assert_eq!(pkt[10], 2, "brightness at byte9");
-        assert_eq!(pkt[11], 2, "speed 4 -> inverted device byte 2 at byte10");
+        assert_eq!(pkt[11], 4, "speed at byte10 (higher = faster, no inversion)");
     }
 
     #[test]
