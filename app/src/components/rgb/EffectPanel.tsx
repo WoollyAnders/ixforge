@@ -168,9 +168,9 @@ export function EffectPanel({
             </div>
           )}
 
-          {hasParam(selected, "randomize") && (
+          {(hasParam(selected, "randomize") || hasParam(selected, "colorful")) && (
             <Switch
-              label="Randomize color"
+              label={hasParam(selected, "colorful") ? "Colorful (rainbow)" : "Randomize color"}
               checked={randomize}
               onChange={(e) => setRandomize(e.currentTarget.checked)}
             />
@@ -181,11 +181,15 @@ export function EffectPanel({
               <Text size="xs" c="dimmed" mb={4}>
                 Color
               </Text>
-              {/* Drag updates the color live (preview + swatch) but only pushes
-                  to the board on release, so a drag doesn't flood it. */}
-              <div onPointerUp={() => void applyEffect()}>
-                <HexColorPicker color={activeColor} onChange={setActiveColor} />
-              </div>
+              {/* Drag updates the color live (preview + swatch); the board apply
+                  is deferred to release via the picker's own onChangeEnd, which
+                  fires with the final committed color (a wrapper onPointerUp races
+                  ahead of that commit and sends the previous color). */}
+              <HexColorPicker
+                color={activeColor}
+                onChange={setActiveColor}
+                onChangeEnd={setEffectColor}
+              />
               <Group gap={6} mt={6}>
                 {COLOR_PRESETS.map((c) => (
                   <ColorSwatch

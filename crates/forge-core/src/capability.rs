@@ -119,8 +119,13 @@ pub enum EffectParam {
     Speed { min: u8, max: u8, default: u8 },
     Brightness { min: u8, max: u8, default: u8 },
     Direction,
-    /// The effect can randomize its color(s) instead of using a fixed one.
+    /// The effect can randomize its color(s) instead of using a fixed one
+    /// (per-element random color). Device byte 8 = 1.
     Randomize,
+    /// The effect can run a full-spectrum "rainbow" instead of one fixed color.
+    /// Same device flag as [`Randomize`] (byte 8 = 1); a separate variant only so
+    /// the UI can label it "Colorful" and default it on for the rainbow effects.
+    Colorful,
     ColorList { max: u8 },
 }
 

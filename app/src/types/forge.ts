@@ -44,6 +44,7 @@ export type EffectParam =
   | { type: "brightness"; min: number; max: number; default: number }
   | { type: "direction" }
   | { type: "randomize" }
+  | { type: "colorful" }
   | { type: "color_list"; max: number };
 
 export interface EffectDescriptor {

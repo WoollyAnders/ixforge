@@ -44,8 +44,11 @@ color_order = "RGB"
 # command whose byte0 is the effect id (1-based); the driver uses each effect's
 # POSITION here + 1 as that id, so THIS ORDER MUST MATCH the device (id 1..18).
 # speed/brightness are device levels 1..5. color_list marks effects that take a
-# single custom color (decoded from capture 08: a `[id] 00 R G B …` command); the
-# rainbow effects (colorful/spectrum/outward/scrolling/rolling/rotating) omit it.
+# single custom color (decoded from capture 08: a `[id] 00 R G B …` command).
+# The "colorful" flag = device byte8=1 (a full-spectrum rainbow instead of the one
+# custom color); outward/scrolling/rolling/rotating support both (rainbow default),
+# and "randomize" (byte8=1 too) is the per-element random variant on the reactive
+# effects. colorful/spectrum are always-rainbow effects with no single-color mode.
 effects = [
   { id = "static", name = "Static", params = [{ type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
   { id = "single_on", name = "Single On", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },
@@ -55,10 +58,10 @@ effects = [
   { id = "colorful", name = "Colorful", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
   { id = "breathe", name = "Breathe", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
   { id = "spectrum", name = "Spectrum", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
-  { id = "outward", name = "Outward", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
-  { id = "scrolling", name = "Scrolling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "direction" }] },
-  { id = "rolling", name = "Rolling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "direction" }] },
-  { id = "rotating", name = "Rotating", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "direction" }] },
+  { id = "outward", name = "Outward", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "colorful" }] },
+  { id = "scrolling", name = "Scrolling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "direction" }, { type = "color_list", max = 1 }, { type = "colorful" }] },
+  { id = "rolling", name = "Rolling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "direction" }, { type = "color_list", max = 1 }, { type = "colorful" }] },
+  { id = "rotating", name = "Rotating", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "direction" }, { type = "color_list", max = 1 }, { type = "colorful" }] },
   { id = "explode", name = "Explode", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },
   { id = "launch", name = "Launch", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },
   { id = "ripples", name = "Ripples", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },

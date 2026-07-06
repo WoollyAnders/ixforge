@@ -209,8 +209,15 @@ export const useStore = create<ForgeState>((set, get) => {
     // Effects apply live: selecting an effect or moving a slider pushes it to
     // the device immediately (no Apply button on the Effects tab).
     selectEffect(id) {
-      // Reset per-effect options so a new effect doesn't inherit the previous one's.
-      set({ selectedEffectId: id, effectDirection: 0, effectRandomize: false });
+      // Reset per-effect options so a new effect doesn't inherit the previous
+      // one's. Rainbow-capable effects (a "colorful" param) default to rainbow
+      // on (byte8=1), matching how the board ships them; "randomize" effects
+      // default off (use the custom color).
+      const eff = get()
+        .rgbCapability()
+        ?.effects.find((e) => e.id === id);
+      const defaultMultiColor = eff?.params.some((p) => p.type === "colorful") ?? false;
+      set({ selectedEffectId: id, effectDirection: 0, effectRandomize: defaultMultiColor });
       void get().applyEffect();
     },
 
