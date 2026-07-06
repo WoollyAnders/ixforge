@@ -217,6 +217,7 @@ fn send_effect(
     // speed of 5 (fastest) maps to byte 1. Speed is clamped 1..5, so 6 - speed
     // stays in range. (Confirmed on hardware.)
     let speed_byte = 6u8.saturating_sub(speed);
+    eprintln!("[fx] ui_speed={speed} -> speed_byte={speed_byte}  bri={brightness} rand={mode}");
     cmd_bracket(
         t,
         &report(&[
