@@ -205,13 +205,19 @@ Confirmed by uploading solid red/blue/green + split test GIFs and diffing:
   **16 × 4096-byte chunks on interrupt OUT endpoint `0x03`** — NOT a HID Feature report; a raw
   endpoint, so the driver needs raw-USB/bulk for the chunks while the commands below stay HID
   Feature reports.
-- **Upload sequence** (Feature-report commands ACK-read, same lock-step as RGB): connect
-  handshake → `04 18` (open) → **`04 72 02 …[byte8]=0x10`** (begin image upload; `0x10`=16 = the
-  chunk count) → the 16 pixel chunks on ep `0x03`.
-- **TODO:** the exact display/commit after the chunks (a `04 02` heartbeat follows; no `04 f0`
-  close seen — confirm whether the image latches on the last chunk or needs a commit); GIF
-  animation (multi-frame) and text/system-monitor "cards"; whether the 736-byte header is fixed
-  or content-dependent (verify with a photo).
+- **Transport — PROVEN ON HARDWARE (hidapi, no WinUSB):** ep `0x03` is on **interface 2**, which
+  is bound to Windows **HidUsb** — so the chunks are just **HID output reports** written to
+  interface 2 (no nusb/WinUSB/Zadig). The begin-upload commands are **Feature reports (SET_REPORT)
+  on interface 3** (same as RGB). Sequence: `04 18` (open, iface 3) → `04 72 02 …[byte8]=0x10`
+  (begin, 16 chunks, iface 3) → 16 pixel chunks as output reports on iface 2.
+- **Flow control:** after each chunk, the host **reads a 64-byte report from interface 2's IN
+  endpoint `0x84`** — a per-chunk ACK — before sending the next. A fixed delay is NOT enough
+  (chunks dropped: 81% then 93%); waiting on the `0x84` ACK latches all 16 reliably and fast.
+- **Orientation confirmed:** the buffer's first pixels are the panel's **top row**, left→right
+  (top-red/bottom-blue test image displays top-red). No flip/rotate needed.
+- No display/commit command after the last chunk — the image latches on completion.
+- **TODO (future):** GIF animation (multi-frame); text/system-monitor "cards"; whether the
+  256-byte header is fixed or content-dependent (verify with a photo).
 
 ### Macros (on-device)
 - Slot count, slot-write framing, event encoding: *TODO*
