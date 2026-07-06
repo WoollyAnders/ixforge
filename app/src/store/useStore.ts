@@ -221,16 +221,17 @@ export const useStore = create<ForgeState>((set, get) => {
       void get().applyEffect();
     },
 
-    // Speed/brightness only update the working value here (keeps the preview +
-    // slider label live while dragging). The device apply is deferred to slider
-    // release (onChangeEnd → applyEffect) so a drag doesn't flood the board with
-    // effect-select brackets — one clean apply when the user lets go.
+    // Speed/brightness are 1..5 sliders, so dragging crosses at most ~4 steps —
+    // apply on each step for live feedback (the worker coalesces to the latest,
+    // so there's no flood). The continuous color picker still debounces.
     setEffectSpeed(n) {
       set({ effectSpeed: n });
+      void get().applyEffect();
     },
 
     setEffectBrightness(n) {
       set({ effectBrightness: n });
+      void get().applyEffect();
     },
 
     setEffectDirection(n) {

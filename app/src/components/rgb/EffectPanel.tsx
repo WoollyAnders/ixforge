@@ -142,7 +142,6 @@ export function EffectPanel({
                 step={1}
                 value={speed}
                 onChange={setSpeed}
-                onChangeEnd={() => void applyEffect()}
                 marks={LEVEL_MARKS}
               />
             </div>
@@ -159,7 +158,6 @@ export function EffectPanel({
                 step={1}
                 value={brightness}
                 onChange={setBrightness}
-                onChangeEnd={() => void applyEffect()}
                 marks={LEVEL_MARKS}
               />
             </div>
