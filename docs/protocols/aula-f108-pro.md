@@ -179,10 +179,20 @@ packet is: `[b0=effect_id] ff 00 00 00 00 00 00 [b8=01] [b9=speed] [b10=brightne
   Breathe-in-green = select packet + this color packet. Rainbow effects (colorful/spectrum/outward/
   scrolling/rolling/rotating) don't take a color.
 - **Direction = byte 11**, **randomize = byte 8** of the select packet (capture `08`: Rolling
-  toggled byte11 0↔1, Single On toggled byte8 0↔1). These are wired as future EffectSelection
-  options; the driver currently sends direction/randomize = 0 (custom color).
+  toggled byte11 0↔1, Single On toggled byte8 0↔1). Wired as EffectSelection options.
 - **NB:** the `aa 55` commit is at **bytes 14-15** for effect packets (not 62-63 like the RGB
   frame commit).
+- **CORRECTED effect packet layout — DECODED / PROVEN ON HARDWARE (captures `10`,`11`):**
+  the effect config is a **single** bracketed command (no separate select vs color packet):
+  `[id, R@1, G@2, B@3, .., randomize@8, brightness@9, speed@10, direction@11, .., aa55@14-15]`.
+  - **Color is plain RGB at bytes 1/2/3** — capture `11` (Breathe): red=`07 ff 00 00`,
+    green=`07 00 ff 00`, cyan=`07 00 ff ff`. NOT a hue, NOT bytes 2/3/4. (Earlier wrong guesses:
+    a "select" packet with byte1=`0xff` actually meant R=255 → forced red on every re-select;
+    a hue-in-byte1 attempt with byte3 pinned to `0xff` made everything read blue↔purple.)
+  - **byte9 = brightness, byte10 = speed** (level 1..5). These were initially swapped — proven on
+    hardware (Speed slider changed brightness). The earlier capture-08 note had them reversed.
+  - **byte8 = 1** → rainbow (flow effects) / per-key random (reactive effects); board ignores RGB.
+  - Re-sending this one packet on any change keeps the color, so there is no "color-only" path.
 
 ### LCD (1.14" TFT)
 - Resolution / orientation / pixel format (RGB565?): *TODO*
