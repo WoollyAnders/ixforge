@@ -33,10 +33,8 @@ use forge_core::{
 
 use crate::framing::{resolve_zone_keys, rgb_layout};
 
-// Image framing for the 1.14" LCD. Consumed by the (upcoming) raw-USB transport;
-// allow dead_code until that lands so the offline-tested encoder can ship first.
-#[allow(dead_code)]
-mod lcd;
+/// Image framing + raw-USB upload for the 1.14" LCD.
+pub mod lcd;
 
 const REPORT_ID: u8 = 0x00;
 const REPORT_LEN: usize = 64;

@@ -118,6 +118,29 @@ fn run() -> Result<(), String> {
             println!("ok: effect '{name}' on {}", dev.profile.display_name);
             Ok(())
         }
+        "lcd" => {
+            let dev = pick_device(&matched, opts.get("device"))?;
+            let path = opts.get("image").ok_or("missing --image <file>")?;
+            let img = image::open(path)
+                .map_err(|e| format!("open image {path:?}: {e}"))?
+                .to_rgb8();
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            let pixels: Vec<Color> = img
+                .pixels()
+                .map(|p| Color { r: p[0], g: p[1], b: p[2] })
+                .collect();
+            let (vid, pid) = (dev.profile.matcher.vid, dev.profile.matcher.pid);
+            println!(
+                "uploading {path} ({w}x{h}) to the LCD of {} [{vid:04x}:{pid:04x}]",
+                dev.profile.display_name
+            );
+            // The LCD uses a raw endpoint (nusb), not the HID session, so this
+            // does not go through open_matched.
+            let log = forge_drivers::sonix::lcd::upload_image(vid, pid, &pixels, w, h)?;
+            print!("{log}");
+            println!("ok: LCD image sent");
+            Ok(())
+        }
         _ => {
             println!("{USAGE}");
             Ok(())
@@ -269,6 +292,11 @@ USAGE:
   forge-cli fill --color <rrggbb> [--hold <secs>] [--device <id>]
   forge-cli probe [--from <n>] [--to <n>] [--dwell <secs>] [--color <rrggbb>] [--device <id>]
   forge-cli effect --name <id> [--speed 1-5] [--brightness 1-5] [--color <rrggbb>] [--device <id>]
+  forge-cli lcd --image <file.gif|png|jpg> [--device <id>]
+
+  lcd: upload an image to the 1.14\" screen (resized to 240x135, RGB565). Uses a
+       raw USB endpoint via nusb — on Windows the LCD interface may need a WinUSB
+       driver (Zadig) if the claim fails.
 
   probe: interactively map keys — lights one LED index at a time (from..=to, hex
          ok e.g. 0x1f), waits for you to type the key that lit, saves to

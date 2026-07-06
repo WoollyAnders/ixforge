@@ -17,3 +17,5 @@ forge-transport = { path = "../forge-transport" }
 forge-profiles = { path = "../forge-profiles" }
 forge-drivers = { path = "../forge-drivers" }
 forge-registry = { path = "../forge-registry" }
+# Decode/resize test images (GIF/PNG/JPG) for the `lcd` command. MIT/Apache.
+image = { version = "0.25", default-features = false, features = ["gif", "png", "jpeg", "bmp"] }

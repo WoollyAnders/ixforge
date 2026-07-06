@@ -22,6 +22,9 @@
 
 use forge_core::Color;
 
+use futures_lite::future::block_on;
+use nusb::transfer::{ControlOut, ControlType, Direction, Recipient};
+
 pub const LCD_WIDTH: usize = 240;
 pub const LCD_HEIGHT: usize = 135;
 /// Total device buffer size for one image.
@@ -99,6 +102,84 @@ pub fn begin_upload_payload() -> [u8; 64] {
     p[2] = 0x02;
     p[8] = NUM_CHUNKS as u8; // 0x10 = 16
     p
+}
+
+/// Upload an image to the LCD over raw USB (`nusb`). Discovers the interface that
+/// owns OUT endpoint `0x03`, claims it, sends the `04 18` / `04 72` begin-upload
+/// Feature reports (SET_REPORT to interface 3), then streams the 16 pixel chunks
+/// to ep `0x03`. Returns a diagnostic log on success. Verbose at each step so a
+/// first hardware run pinpoints where it fails — especially the interface claim,
+/// which on Windows needs a WinUSB driver bound to that interface.
+pub fn upload_image(
+    vid: u16,
+    pid: u16,
+    src: &[Color],
+    src_w: usize,
+    src_h: usize,
+) -> Result<String, String> {
+    let mut log = String::new();
+    let di = nusb::list_devices()
+        .map_err(|e| format!("list_devices: {e}"))?
+        .find(|d| d.vendor_id() == vid && d.product_id() == pid)
+        .ok_or_else(|| format!("device {vid:04x}:{pid:04x} not found (is it plugged in wired?)"))?;
+    let device = di.open().map_err(|e| format!("open device: {e}"))?;
+
+    // Discover the interface that owns OUT endpoint 0x03.
+    let mut lcd_iface = None;
+    for cfg in device.configurations() {
+        for alt in cfg.interface_alt_settings() {
+            for ep in alt.endpoints() {
+                log.push_str(&format!(
+                    "iface {} ep 0x{:02x} {:?} {:?}\n",
+                    alt.interface_number(),
+                    ep.address(),
+                    ep.direction(),
+                    ep.transfer_type()
+                ));
+                if ep.address() == 0x03 && ep.direction() == Direction::Out {
+                    lcd_iface = Some(alt.interface_number());
+                }
+            }
+        }
+    }
+    let lcd_iface =
+        lcd_iface.ok_or_else(|| format!("no OUT endpoint 0x03 found.\ntopology:\n{log}"))?;
+    let interface = device
+        .claim_interface(lcd_iface)
+        .map_err(|e| format!("claim interface {lcd_iface}: {e}\n(needs a WinUSB driver on Windows)\ntopology:\n{log}"))?;
+    log.push_str(&format!("claimed LCD interface {lcd_iface}\n"));
+
+    let frame = encode_frame(src, src_w, src_h);
+
+    // Begin-upload commands: SET_REPORT (class, interface 3) Feature id 0.
+    let set_report = |data: &[u8]| -> Result<(), String> {
+        block_on(interface.control_out(ControlOut {
+            control_type: ControlType::Class,
+            recipient: Recipient::Interface,
+            request: 0x09, // SET_REPORT
+            value: 0x0300, // Feature report, id 0
+            index: 3,      // interface 3 (same as the RGB command path)
+            data,
+        }))
+        .into_result()
+        .map(|_| ())
+        .map_err(|e| format!("SET_REPORT: {e:?}"))
+    };
+    let mut open = [0u8; 64];
+    open[0] = 0x04;
+    open[1] = 0x18;
+    set_report(&open)?;
+    set_report(&begin_upload_payload())?;
+    log.push_str("sent 04 18 + 04 72 begin-upload\n");
+
+    // Stream the 16 pixel chunks to endpoint 0x03.
+    for (i, chunk) in chunks(&frame).into_iter().enumerate() {
+        block_on(interface.interrupt_out(0x03, chunk.to_vec()))
+            .into_result()
+            .map_err(|e| format!("interrupt_out chunk {i}: {e:?}"))?;
+    }
+    log.push_str(&format!("streamed {NUM_CHUNKS} chunks to ep 0x03 — done\n"));
+    Ok(log)
 }
 
 #[cfg(test)]
