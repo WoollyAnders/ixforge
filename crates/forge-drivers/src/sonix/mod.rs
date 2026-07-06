@@ -211,6 +211,7 @@ fn send_effect(
 ) -> Result<(), ForgeError> {
     let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom color
     let c = color.unwrap_or(Color::BLACK); // RGB ignored by the board when randomize
+    eprintln!("[fx] id={id} speed={speed} bri={brightness} dir={direction} rand={mode} rgb={c:?}");
     cmd_bracket(
         t,
         &report(&[
