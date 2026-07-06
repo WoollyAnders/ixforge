@@ -188,35 +188,17 @@ fn cmd_bracket(t: &mut dyn HidTransport, payload: &[u8; REPORT_LEN]) -> Result<(
     Ok(())
 }
 
-/// The onboard effect color is a **hue**, not RGB. Decoded from capture `10`
-/// (AULA setting Breathe to known colors): the color packet is
-/// `[id, hue@1, sat@2=00, val@3=ff, .., aa 55 @14-15]`, where `hue` is the color
-/// wheel angle scaled `deg * 255/360`. Anchors: red 0°→`0x00`, cyan 180°→`0x7e`,
-/// blue 240°→`0xaa`. (The per-key `04 20` path is still true RGB; only these
-/// onboard effect colors are hue-based — which is why feeding the board RGB made
-/// it snap to a primary: it read our bytes as a bogus hue.)
-fn hue_byte(c: Color) -> u8 {
-    let (r, g, b) = (c.r as f32, c.g as f32, c.b as f32);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let d = max - min;
-    if d == 0.0 {
-        return 0; // grey/white/black: no hue → treat as red (0°)
-    }
-    let h = if max == r {
-        60.0 * ((g - b) / d).rem_euclid(6.0)
-    } else if max == g {
-        60.0 * ((b - r) / d + 2.0)
-    } else {
-        60.0 * ((r - g) / d + 4.0)
-    };
-    (h * 255.0 / 360.0).round() as u8
-}
-
-/// Select an onboard animation and (for color-capable effects) set its hue.
-///   select: `[id, ff, .., byte8=rand, speed@9, brightness@10, dir@11, aa 55 @14-15]`
-///   color:  `[id, hue@1, 00@2, ff@3, .., speed@9, brightness@10, aa 55 @14-15]`
-/// The board then animates on its own MCU.
+/// Select/configure an onboard animation in **one** bracketed command. Decoded
+/// from capture `11` (AULA setting Breathe to red/green/cyan):
+///   `[id, R@1, G@2, B@3, .., randomize@8, speed@9, brightness@10, direction@11, aa 55 @14-15]`
+/// The color is plain **RGB at bytes 1/2/3** (red=`ff 00 00`, green=`00 ff 00`,
+/// cyan=`00 ff ff`). When `randomize`/colorful is set (byte8=1) the board runs a
+/// rainbow and ignores the RGB. There is no separate "select" vs "color" packet:
+/// every change re-sends this one packet with the current RGB + params, so a
+/// speed/brightness tweak keeps the color (the earlier bug was a "select" packet
+/// with byte1=0xff, i.e. R=255, which forced red on every re-select). The board
+/// then animates on its own MCU. `color_only` is accepted for API compatibility
+/// but no longer changes the wire format.
 fn send_effect(
     t: &mut dyn HidTransport,
     id: u8,
@@ -225,46 +207,17 @@ fn send_effect(
     direction: u8,
     randomize: bool,
     color: Option<Color>,
-    color_only: bool,
+    _color_only: bool,
 ) -> Result<(), ForgeError> {
-    // `color_only`: change a running effect's color without re-selecting it. The
-    // board resets a color effect to its default on re-select, so a select before
-    // every live color tweak would wipe the tweak (matches the official app,
-    // which selects once then streams color-only packets).
-    let has_color = !randomize && color.is_some();
-    if !color_only {
-        let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom
-        cmd_bracket(
-            t,
-            &report(&[
-                (0, id), (1, 0xff), (8, mode), (9, speed), (10, brightness), (11, direction),
-                (14, 0xaa), (15, 0x55),
-            ]),
-        )?;
-        // The board drops a color packet that arrives right after a select (the
-        // select re-inits the effect to its default color first). Give it a beat
-        // before the color so the color latches — the official app has a similar
-        // human-scale gap. No-op under test.
-        #[cfg(not(test))]
-        if has_color {
-            thread::sleep(Duration::from_millis(200));
-        }
-    }
-    // A custom color only matters when not randomizing. Hue in byte1, saturation
-    // pinned full (byte2=0), value full (byte3=0xff); the effect's brightness
-    // level dims it. The value byte (0xff) also distinguishes this from a select
-    // packet (whose byte3 is 0), even when a hue happens to land on 0xff.
-    if has_color {
-        if let Some(c) = color {
-            let hue = hue_byte(c);
-            eprintln!("[fx] id={id} color_only={color_only} rgb={c:?} -> hue=0x{hue:02x}");
-            let pkt = report(&[
-                (0, id), (1, hue), (2, 0x00), (3, 0xff), (9, speed), (10, brightness),
-                (14, 0xaa), (15, 0x55),
-            ]);
-            cmd_bracket(t, &pkt)?;
-        }
-    }
+    let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom color
+    let c = color.unwrap_or(Color::BLACK); // RGB ignored by the board when randomize
+    cmd_bracket(
+        t,
+        &report(&[
+            (0, id), (1, c.r), (2, c.g), (3, c.b), (8, mode),
+            (9, speed), (10, brightness), (11, direction), (14, 0xaa), (15, 0x55),
+        ]),
+    )?;
     Ok(())
 }
 
@@ -704,30 +657,23 @@ mod tests {
 
         let w = mock.feature_writes();
         assert_eq!((w[0][1], w[0][2]), (0x04, 0x18), "connect first");
-        // Payload byte N is at write index N+1 (report-id-prefixed).
-        // Select packet: byte0=id 3, byte1=0xff, speed@9, brightness@10, aa55@14-15.
-        let sel = w
+        // Payload byte N is at write index N+1 (report-id-prefixed). One packet
+        // carries everything: byte0=id 3, RGB@1/2/3 (red = ff 00 00), byte8=rand,
+        // speed@9, brightness@10, aa55@14-15.
+        let pkt = w
             .iter()
-            .find(|r| r[1] == 0x03 && r[2] == 0xff)
-            .expect("effect-select packet present");
-        assert_eq!(sel[10], 4, "speed at payload byte9");
-        assert_eq!(sel[11], 2, "brightness at payload byte10");
-        assert_eq!((sel[15], sel[16]), (0xaa, 0x55), "aa55 at payload bytes 14-15");
-        // Color packet: byte0=id 3, hue@1, sat@2=00, val@3=0xff. Red = hue 0.
-        // (Identified by the value byte 0xff at payload byte3 = write index 4.)
-        let col = w
-            .iter()
-            .find(|r| r[1] == 0x03 && r[4] == 0xff)
-            .expect("effect-color packet present");
-        assert_eq!(col[2], 0x00, "red hue = 0 at payload byte1");
-        assert_eq!(col[3], 0x00, "saturation full (byte2=0)");
-        assert_eq!(col[4], 0xff, "value full (byte3=0xff)");
+            .find(|r| r[1] == 0x03 && (r[16], r[15]) == (0x55, 0xaa))
+            .expect("effect packet present");
+        assert_eq!((pkt[2], pkt[3], pkt[4]), (0xff, 0x00, 0x00), "red RGB at bytes 1-3");
+        assert_eq!(pkt[9], 0x00, "randomize off at byte8");
+        assert_eq!(pkt[10], 4, "speed at byte9");
+        assert_eq!(pkt[11], 2, "brightness at byte10");
     }
 
     #[test]
-    fn color_only_sends_color_packet_without_reselecting() {
-        // A live color tweak must NOT re-select the effect (re-select resets a
-        // color effect to its default on the board), only push the color packet.
+    fn effect_color_is_rgb_at_bytes_1_2_3() {
+        // A custom color is carried as plain RGB at payload bytes 1/2/3 (decoded
+        // from capture 11). Purple (0xb5, 0x00, 0xff) passes straight through.
         let mock = MockTransport::new();
         let mut session = SonixDriver
             .open(&esc_profile(), Box::new(mock.clone()))
@@ -747,18 +693,39 @@ mod tests {
         drop(session);
 
         let w = mock.feature_writes();
-        // No select packet (byte0=id 3, byte1=0xff with value byte 0 at byte3) present.
-        assert!(
-            !w.iter().any(|r| r[1] == 0x03 && r[2] == 0xff && r[4] == 0x00),
-            "color_only must not re-select the effect"
-        );
-        // The color packet encodes purple as a hue: (181,0,255) → 282.6° → 0xc8,
-        // saturation full (byte2=0), value full (byte3=0xff).
-        let col = w
+        let pkt = w
             .iter()
-            .find(|r| r[1] == 0x03 && r[4] == 0xff)
-            .expect("color packet present");
-        assert_eq!(col[2], 0xc8, "purple hue at payload byte1");
-        assert_eq!((col[3], col[4]), (0x00, 0xff), "sat full, value full");
+            .find(|r| r[1] == 0x03 && (r[16], r[15]) == (0x55, 0xaa))
+            .expect("effect packet present");
+        assert_eq!((pkt[2], pkt[3], pkt[4]), (0xb5, 0x00, 0xff), "purple RGB at bytes 1-3");
+    }
+
+    #[test]
+    fn randomize_sets_byte8_for_rainbow() {
+        // Colorful/randomize effects flip byte8 (=1) and the board ignores the RGB.
+        let mock = MockTransport::new();
+        let mut session = SonixDriver
+            .open(&esc_profile(), Box::new(mock.clone()))
+            .unwrap();
+        session
+            .set_effect(&EffectSelection {
+                effect_id: "single_off".into(), // id 3
+                speed: Some(3),
+                brightness: Some(3),
+                colors: vec![Color::RED],
+                direction: None,
+                randomize: true,
+                color_only: false,
+            })
+            .unwrap();
+        thread::sleep(Duration::from_millis(150));
+        drop(session);
+
+        let w = mock.feature_writes();
+        let pkt = w
+            .iter()
+            .find(|r| r[1] == 0x03 && (r[16], r[15]) == (0x55, 0xaa))
+            .expect("effect packet present");
+        assert_eq!(pkt[9], 0x01, "randomize/rainbow at byte8");
     }
 }
