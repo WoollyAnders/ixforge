@@ -213,11 +213,15 @@ fn send_effect(
 ) -> Result<(), ForgeError> {
     let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom color
     let c = color.unwrap_or(Color::BLACK); // RGB ignored by the board when randomize
+    // The device speed byte is INVERTED — a higher byte animates slower — so a UI
+    // speed of 5 (fastest) maps to byte 1. Speed is clamped 1..5, so 6 - speed
+    // stays in range. (Confirmed on hardware.)
+    let speed_byte = 6u8.saturating_sub(speed);
     cmd_bracket(
         t,
         &report(&[
             (0, id), (1, c.r), (2, c.g), (3, c.b), (8, mode),
-            (9, brightness), (10, speed), (11, direction), (14, 0xaa), (15, 0x55),
+            (9, brightness), (10, speed_byte), (11, direction), (14, 0xaa), (15, 0x55),
         ]),
     )?;
     Ok(())
@@ -669,7 +673,7 @@ mod tests {
         assert_eq!((pkt[2], pkt[3], pkt[4]), (0xff, 0x00, 0x00), "red RGB at bytes 1-3");
         assert_eq!(pkt[9], 0x00, "randomize off at byte8");
         assert_eq!(pkt[10], 2, "brightness at byte9");
-        assert_eq!(pkt[11], 4, "speed at byte10");
+        assert_eq!(pkt[11], 2, "speed 4 -> inverted device byte 2 at byte10");
     }
 
     #[test]
