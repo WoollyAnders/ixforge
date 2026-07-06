@@ -207,7 +207,9 @@ fn upload_lcd(vid: u16, pid: u16, frame: &[u8]) -> Result<String, String> {
     feature(&lcd::open_payload())?;
     feature(&lcd::begin_upload_payload())?;
 
-    // Output report = [report id 0][4096-byte chunk] to interface 2.
+    // Output report = [report id 0][4096-byte chunk] to interface 2. Pace between
+    // chunks — sent back-to-back the device drops some (it latched ~13/16 = "81%"
+    // with no delay); the official app paces every report ~33 ms.
     let mut n = 0;
     for chunk in lcd::chunks(frame) {
         let mut buf = Vec::with_capacity(1 + chunk.len());
@@ -215,6 +217,7 @@ fn upload_lcd(vid: u16, pid: u16, frame: &[u8]) -> Result<String, String> {
         buf.extend_from_slice(&chunk);
         data.write(&buf)
             .map_err(|e| format!("write chunk {n}: {e}"))?;
+        std::thread::sleep(std::time::Duration::from_millis(33));
         n += 1;
     }
     Ok(format!(
