@@ -214,14 +214,16 @@ export const useStore = create<ForgeState>((set, get) => {
       void get().applyEffect();
     },
 
+    // Speed/brightness only update the working value here (keeps the preview +
+    // slider label live while dragging). The device apply is deferred to slider
+    // release (onChangeEnd → applyEffect) so a drag doesn't flood the board with
+    // effect-select brackets — one clean apply when the user lets go.
     setEffectSpeed(n) {
       set({ effectSpeed: n });
-      void get().applyEffect();
     },
 
     setEffectBrightness(n) {
       set({ effectBrightness: n });
-      void get().applyEffect();
     },
 
     setEffectDirection(n) {

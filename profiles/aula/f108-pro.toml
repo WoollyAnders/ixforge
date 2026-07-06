@@ -50,7 +50,7 @@ effects = [
   { id = "static", name = "Static", params = [{ type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
   { id = "single_on", name = "Single On", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },
   { id = "single_off", name = "Single Off", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },
-  { id = "glittering", name = "Glittering", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },
+  { id = "glittering", name = "Glittering", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },
   { id = "falling", name = "Falling", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }, { type = "randomize" }] },
   { id = "colorful", name = "Colorful", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }] },
   { id = "breathe", name = "Breathe", params = [{ type = "speed", min = 1, max = 5, default = 3 }, { type = "brightness", min = 1, max = 5, default = 5 }, { type = "color_list", max = 1 }] },

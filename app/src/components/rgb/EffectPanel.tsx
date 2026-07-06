@@ -55,11 +55,13 @@ export function EffectPanel({
   const brightness = useStore((s) => s.effectBrightness);
   const setSpeed = useStore((s) => s.setEffectSpeed);
   const setBrightness = useStore((s) => s.setEffectBrightness);
+  const applyEffect = useStore((s) => s.applyEffect);
   const direction = useStore((s) => s.effectDirection);
   const setDirection = useStore((s) => s.setEffectDirection);
   const randomize = useStore((s) => s.effectRandomize);
   const setRandomize = useStore((s) => s.setEffectRandomize);
   const activeColor = useStore((s) => s.activeColor);
+  const setActiveColor = useStore((s) => s.setActiveColor);
   const setEffectColor = useStore((s) => s.setEffectColor);
 
   if (!rgb) return null;
@@ -120,7 +122,15 @@ export function EffectPanel({
               <Text size="xs" c="dimmed">
                 Speed
               </Text>
-              <Slider min={1} max={5} step={1} value={speed} onChange={setSpeed} marks={LEVEL_MARKS} />
+              <Slider
+                min={1}
+                max={5}
+                step={1}
+                value={speed}
+                onChange={setSpeed}
+                onChangeEnd={() => void applyEffect()}
+                marks={LEVEL_MARKS}
+              />
             </div>
           )}
 
@@ -135,6 +145,7 @@ export function EffectPanel({
                 step={1}
                 value={brightness}
                 onChange={setBrightness}
+                onChangeEnd={() => void applyEffect()}
                 marks={LEVEL_MARKS}
               />
             </div>
@@ -170,7 +181,11 @@ export function EffectPanel({
               <Text size="xs" c="dimmed" mb={4}>
                 Color
               </Text>
-              <HexColorPicker color={activeColor} onChange={setEffectColor} />
+              {/* Drag updates the color live (preview + swatch) but only pushes
+                  to the board on release, so a drag doesn't flood it. */}
+              <div onPointerUp={() => void applyEffect()}>
+                <HexColorPicker color={activeColor} onChange={setActiveColor} />
+              </div>
               <Group gap={6} mt={6}>
                 {COLOR_PRESETS.map((c) => (
                   <ColorSwatch
