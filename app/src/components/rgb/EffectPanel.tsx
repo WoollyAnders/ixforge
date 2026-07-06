@@ -32,6 +32,13 @@ function hasParam(e: EffectDescriptor, type: string): boolean {
   return e.params.some((p) => p.type === type);
 }
 
+// Arrow labels per directional effect: [value 0, value 1], matching its axis.
+const DIRECTION_ARROWS: Record<string, [string, string]> = {
+  scrolling: ["↓", "↑"], // top-down / down-up
+  rolling: ["→", "←"], // left-right / right-left
+  rotating: ["↻", "↺"], // clockwise / counter-clockwise
+};
+
 export function EffectPanel({
   layout,
   chassis,
@@ -53,7 +60,7 @@ export function EffectPanel({
   const randomize = useStore((s) => s.effectRandomize);
   const setRandomize = useStore((s) => s.setEffectRandomize);
   const activeColor = useStore((s) => s.activeColor);
-  const setActiveColor = useStore((s) => s.setActiveColor);
+  const setEffectColor = useStore((s) => s.setEffectColor);
 
   if (!rgb) return null;
   const selected = rgb.effects.find((e) => e.id === selectedEffectId);
@@ -139,12 +146,12 @@ export function EffectPanel({
                 Direction
               </Text>
               <SegmentedControl
-                size="xs"
+                size="sm"
                 value={String(direction)}
                 onChange={(v) => setDirection(Number(v))}
                 data={[
-                  { label: "Forward", value: "0" },
-                  { label: "Reverse", value: "1" },
+                  { label: (DIRECTION_ARROWS[selected.id] ?? ["▶", "◀"])[0], value: "0" },
+                  { label: (DIRECTION_ARROWS[selected.id] ?? ["▶", "◀"])[1], value: "1" },
                 ]}
               />
             </div>
@@ -163,13 +170,13 @@ export function EffectPanel({
               <Text size="xs" c="dimmed" mb={4}>
                 Color
               </Text>
-              <HexColorPicker color={activeColor} onChange={setActiveColor} />
+              <HexColorPicker color={activeColor} onChange={setEffectColor} />
               <Group gap={6} mt={6}>
                 {COLOR_PRESETS.map((c) => (
                   <ColorSwatch
                     key={c}
                     color={c}
-                    onClick={() => setActiveColor(c)}
+                    onClick={() => setEffectColor(c)}
                     style={{ cursor: "pointer" }}
                   />
                 ))}

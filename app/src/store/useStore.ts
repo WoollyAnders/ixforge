@@ -48,6 +48,7 @@ interface ForgeState {
   setEffectBrightness: (n: number) => void;
   setEffectDirection: (n: number) => void;
   setEffectRandomize: (b: boolean) => void;
+  setEffectColor: (hex: string) => void;
   applyEffect: () => Promise<void>;
 
   // Saved per-key presets for the selected device
@@ -230,6 +231,13 @@ export const useStore = create<ForgeState>((set, get) => {
 
     setEffectRandomize(b) {
       set({ effectRandomize: b });
+      void get().applyEffect();
+    },
+
+    // Set the active color AND re-apply the effect (the Effects tab's color
+    // picker; plain setActiveColor only updates state, used by the Custom tab).
+    setEffectColor(hex) {
+      set({ activeColor: hex });
       void get().applyEffect();
     },
 
