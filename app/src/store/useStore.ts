@@ -49,7 +49,7 @@ interface ForgeState {
   setEffectDirection: (n: number) => void;
   setEffectRandomize: (b: boolean) => void;
   setEffectColor: (hex: string) => void;
-  applyEffect: () => Promise<void>;
+  applyEffect: (colorOnly?: boolean) => Promise<void>;
 
   // Saved per-key presets for the selected device
   presets: Preset[];
@@ -243,14 +243,16 @@ export const useStore = create<ForgeState>((set, get) => {
       void get().applyEffect();
     },
 
-    // Set the active color AND re-apply the effect (the Effects tab's color
-    // picker; plain setActiveColor only updates state, used by the Custom tab).
+    // Set the active color AND push it to the running effect as a color-only
+    // change (no re-select — the board resets a color effect on re-select).
+    // Used by the Effects tab's swatches; plain setActiveColor (Custom tab) only
+    // updates state.
     setEffectColor(hex) {
       set({ activeColor: hex });
-      void get().applyEffect();
+      void get().applyEffect(true);
     },
 
-    async applyEffect() {
+    async applyEffect(colorOnly = false) {
       const {
         selectedId,
         selectedEffectId,
@@ -268,6 +270,7 @@ export const useStore = create<ForgeState>((set, get) => {
         colors: [hexToColor(activeColor)],
         direction: effectDirection,
         randomize: effectRandomize,
+        color_only: colorOnly,
       };
       try {
         await ipc.setEffect(selectedId, sel);

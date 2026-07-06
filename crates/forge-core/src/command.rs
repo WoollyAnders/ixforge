@@ -39,6 +39,12 @@ pub struct EffectSelection {
     /// Randomize the effect's color instead of using `colors` (device byte 8).
     #[serde(default)]
     pub randomize: bool,
+    /// Change only the effect's color, without re-selecting it. The board resets
+    /// a color effect to its default when re-selected, so once an effect is
+    /// running, live color tweaks must send the color packet alone (no select) —
+    /// otherwise every tweak resets to the default and the color never sticks.
+    #[serde(default)]
+    pub color_only: bool,
 }
 
 /// A macro program: an ordered list of input events plus a repeat policy.

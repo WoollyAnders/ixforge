@@ -201,29 +201,32 @@ fn send_effect(
     direction: u8,
     randomize: bool,
     color: Option<Color>,
+    color_only: bool,
 ) -> Result<(), ForgeError> {
-    let mode = u8::from(randomize); // byte8: 1 = randomize color, 0 = use custom
+    // `color_only`: change a running effect's color without re-selecting it. The
+    // board resets a color effect to its default on re-select, so a select before
+    // every live color tweak would wipe the tweak (matches the official app,
+    // which selects once then streams color-only packets).
     eprintln!(
-        "[fx] send_effect id={id} speed={speed} bri={brightness} dir={direction} rand={randomize} color={color:?}"
+        "[fx] id={id} speed={speed} bri={brightness} dir={direction} rand={randomize} color_only={color_only} color={color:?}"
     );
-    cmd_bracket(
-        t,
-        &report(&[
-            (0, id), (1, 0xff), (8, mode), (9, speed), (10, brightness), (11, direction),
-            (14, 0xaa), (15, 0x55),
-        ]),
-    )?;
-    // A custom color only matters when not randomizing.
+    if !color_only {
+        let mode = u8::from(randomize); // byte8: 1 = randomize/rainbow, 0 = custom
+        cmd_bracket(
+            t,
+            &report(&[
+                (0, id), (1, 0xff), (8, mode), (9, speed), (10, brightness), (11, direction),
+                (14, 0xaa), (15, 0x55),
+            ]),
+        )?;
+    }
+    // A custom color only matters when not randomizing (byte1 = 00 = color packet).
     if !randomize {
         if let Some(c) = color {
             let pkt = report(&[
                 (0, id), (2, c.r), (3, c.g), (4, c.b), (9, speed), (10, brightness),
                 (14, 0xaa), (15, 0x55),
             ]);
-            eprintln!(
-                "[fx] color packet bytes 0..16 = {:02x?}",
-                &pkt[0..16]
-            );
             cmd_bracket(t, &pkt)?;
         }
     }
@@ -242,6 +245,8 @@ enum Mode {
         direction: u8,
         randomize: bool,
         color: Option<Color>,
+        /// Only push the color packet (effect already running); don't re-select.
+        color_only: bool,
     },
     /// Nothing to drive (fresh session, or an onboard effect is running).
     Idle,
@@ -263,7 +268,15 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
     }
     enum Act {
         Stream(Box<[[u8; REPORT_LEN]; 7]>),
-        Effect { id: u8, speed: u8, brightness: u8, direction: u8, randomize: bool, color: Option<Color> },
+        Effect {
+            id: u8,
+            speed: u8,
+            brightness: u8,
+            direction: u8,
+            randomize: bool,
+            color: Option<Color>,
+            color_only: bool,
+        },
         Idle,
     }
     while shared.running.load(Ordering::Relaxed) {
@@ -272,7 +285,15 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
             let mut mode = shared.mode.lock().unwrap_or_else(|e| e.into_inner());
             match &*mode {
                 Mode::Streaming(frame) => Act::Stream(Box::new(encode_effect_frame(frame))),
-                Mode::SelectEffect { id, speed, brightness, direction, randomize, color } => {
+                Mode::SelectEffect {
+                    id,
+                    speed,
+                    brightness,
+                    direction,
+                    randomize,
+                    color,
+                    color_only,
+                } => {
                     let a = Act::Effect {
                         id: *id,
                         speed: *speed,
@@ -280,6 +301,7 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
                         direction: *direction,
                         randomize: *randomize,
                         color: *color,
+                        color_only: *color_only,
                     };
                     *mode = Mode::Idle; // one-shot; the board keeps animating on its own
                     a
@@ -294,9 +316,18 @@ fn worker_loop(mut transport: Box<dyn HidTransport>, shared: Arc<Shared>) {
                 }
                 thread::sleep(FRAME_GAP);
             }
-            Act::Effect { id, speed, brightness, direction, randomize, color } => {
-                if send_effect(transport.as_mut(), id, speed, brightness, direction, randomize, color)
-                    .is_err()
+            Act::Effect { id, speed, brightness, direction, randomize, color, color_only } => {
+                if send_effect(
+                    transport.as_mut(),
+                    id,
+                    speed,
+                    brightness,
+                    direction,
+                    randomize,
+                    color,
+                    color_only,
+                )
+                .is_err()
                 {
                     break;
                 }
@@ -435,8 +466,19 @@ impl DeviceSession for SonixSession {
             .iter()
             .any(|p| matches!(p, forge_core::EffectParam::ColorList { .. }));
         let color = if takes_color { sel.colors.first().copied() } else { None };
-        *self.shared.mode.lock().unwrap_or_else(|e| e.into_inner()) =
-            Mode::SelectEffect { id, speed, brightness, direction, randomize, color };
+        // A color-only tweak with nothing to send (effect takes no color) is a no-op.
+        if sel.color_only && color.is_none() {
+            return Ok(());
+        }
+        *self.shared.mode.lock().unwrap_or_else(|e| e.into_inner()) = Mode::SelectEffect {
+            id,
+            speed,
+            brightness,
+            direction,
+            randomize,
+            color,
+            color_only: sel.color_only,
+        };
         Ok(())
     }
 
@@ -619,6 +661,7 @@ mod tests {
                 colors: vec![Color::RED],
                 direction: None,
                 randomize: false,
+                color_only: false,
             })
             .unwrap();
         thread::sleep(Duration::from_millis(150));
@@ -641,5 +684,41 @@ mod tests {
             .find(|r| r[1] == 0x03 && r[2] == 0x00)
             .expect("effect-color packet present");
         assert_eq!((col[3], col[4], col[5]), (0xff, 0x00, 0x00), "red at payload bytes 2-4");
+    }
+
+    #[test]
+    fn color_only_sends_color_packet_without_reselecting() {
+        // A live color tweak must NOT re-select the effect (re-select resets a
+        // color effect to its default on the board), only push the color packet.
+        let mock = MockTransport::new();
+        let mut session = SonixDriver
+            .open(&esc_profile(), Box::new(mock.clone()))
+            .unwrap();
+        session
+            .set_effect(&EffectSelection {
+                effect_id: "single_off".into(), // id 3
+                speed: Some(4),
+                brightness: Some(2),
+                colors: vec![Color { r: 0xb5, g: 0x00, b: 0xff }], // purple
+                direction: None,
+                randomize: false,
+                color_only: true,
+            })
+            .unwrap();
+        thread::sleep(Duration::from_millis(150));
+        drop(session);
+
+        let w = mock.feature_writes();
+        // No select packet (byte0=id 3, byte1=0xff) may be present.
+        assert!(
+            !w.iter().any(|r| r[1] == 0x03 && r[2] == 0xff),
+            "color_only must not re-select the effect"
+        );
+        // The color packet (byte1=0x00) carries the exact purple, unquantized.
+        let col = w
+            .iter()
+            .find(|r| r[1] == 0x03 && r[2] == 0x00)
+            .expect("color packet present");
+        assert_eq!((col[3], col[4], col[5]), (0xb5, 0x00, 0xff), "purple passes through");
     }
 }

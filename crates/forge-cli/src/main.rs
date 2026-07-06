@@ -110,6 +110,7 @@ fn run() -> Result<(), String> {
                     .collect(),
                 direction: opts.get("direction").and_then(|s| s.parse().ok()),
                 randomize: opts.get("randomize").map(|s| s == "1" || s == "true").unwrap_or(false),
+                color_only: false,
             };
             let drivers = forge_drivers::all_drivers();
             let mut session = open_matched(&backend, dev, &drivers).map_err(|e| e.to_string())?;

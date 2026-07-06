@@ -333,6 +333,7 @@ mod tests {
                 colors: vec![Color::GREEN],
                 direction: None,
                 randomize: false,
+                color_only: false,
             })
             .unwrap();
 
@@ -367,6 +368,7 @@ mod tests {
                 colors: vec![],
                 direction: None,
                 randomize: false,
+                color_only: false,
             })
             .unwrap_err();
         // No RGB capability at all → NotSupported.

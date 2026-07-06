@@ -109,6 +109,7 @@ export interface EffectSelection {
   colors: Color[];
   direction?: number; // 0 = default, 1 = reverse (effects with a "direction" param)
   randomize?: boolean; // randomize color instead of `colors` ("randomize" param)
+  color_only?: boolean; // change color without re-selecting (live color tweak)
 }
 
 export interface DeviceSummary {

@@ -74,7 +74,8 @@ export function EffectPanel({
   const pickColor = (hex: string) => {
     setActiveColor(hex);
     if (colorApplyTimer.current) clearTimeout(colorApplyTimer.current);
-    colorApplyTimer.current = setTimeout(() => void applyEffect(), 90);
+    // color-only: update the running effect's color without re-selecting it.
+    colorApplyTimer.current = setTimeout(() => void applyEffect(true), 90);
   };
 
   if (!rgb) return null;
