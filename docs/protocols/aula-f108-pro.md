@@ -194,10 +194,23 @@ packet is: `[b0=effect_id] ff 00 00 00 00 00 00 [b8=01] [b9=speed] [b10=brightne
   - **byte8 = 1** → rainbow (flow effects) / per-key random (reactive effects); board ignores RGB.
   - Re-sending this one packet on any change keeps the color, so there is no "color-only" path.
 
-### LCD (1.14" TFT)
-- Resolution / orientation / pixel format (RGB565?): *TODO*
-- Upload framing: header, chunking, addressing: *TODO*
-- Text vs image vs system-monitor modes: *TODO*
+### LCD (1.14" TFT) — image upload **DECODED** (from captures `13`–`17`)
+Confirmed by uploading solid red/blue/green + split test GIFs and diffing:
+- **Resolution `240 × 135`, pixel format RGB565 little-endian.** Red=`f800`→bytes `00 f8`,
+  blue=`001f`→`1f 00`, green=`07e0`→`e0 07`. Each solid image = exactly 32,400 matching words.
+- **Scan order: row-major, top→bottom, left→right** (top-red/bottom-blue → red rows first;
+  left-red/right-green → red/green alternating every 120 px within each row).
+- **Buffer** = a fixed **736-byte header** (`01 05` then `0xFF` padding) + `240×135×2` = 64,800
+  bytes of pixels = **65,536 total**, sent as **16 × 4096-byte chunks on interrupt OUT endpoint
+  `0x03`** (NOT a HID Feature report — a raw endpoint; the driver needs raw-USB/bulk for this,
+  while the commands below stay HID Feature reports).
+- **Upload sequence** (Feature-report commands ACK-read, same lock-step as RGB): connect
+  handshake → `04 18` (open) → **`04 72 02 …[byte8]=0x10`** (begin image upload; `0x10`=16 = the
+  chunk count) → the 16 pixel chunks on ep `0x03`.
+- **TODO:** the exact display/commit after the chunks (a `04 02` heartbeat follows; no `04 f0`
+  close seen — confirm whether the image latches on the last chunk or needs a commit); GIF
+  animation (multi-frame) and text/system-monitor "cards"; whether the 736-byte header is fixed
+  or content-dependent (verify with a photo).
 
 ### Macros (on-device)
 - Slot count, slot-write framing, event encoding: *TODO*
