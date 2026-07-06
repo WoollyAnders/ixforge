@@ -200,10 +200,11 @@ Confirmed by uploading solid red/blue/green + split test GIFs and diffing:
   blue=`001f`→`1f 00`, green=`07e0`→`e0 07`. Each solid image = exactly 32,400 matching words.
 - **Scan order: row-major, top→bottom, left→right** (top-red/bottom-blue → red rows first;
   left-red/right-green → red/green alternating every 120 px within each row).
-- **Buffer** = a fixed **736-byte header** (`01 05` then `0xFF` padding) + `240×135×2` = 64,800
-  bytes of pixels = **65,536 total**, sent as **16 × 4096-byte chunks on interrupt OUT endpoint
-  `0x03`** (NOT a HID Feature report — a raw endpoint; the driver needs raw-USB/bulk for this,
-  while the commands below stay HID Feature reports).
+- **Buffer (65,536 bytes)** = **256-byte header** (`01 05` then 254×`0xFF`) + **240×135×2 = 64,800
+  bytes** of RGB565-LE pixels (offset 256) + **480-byte `0xFF` trailer** (pad to 65,536). Sent as
+  **16 × 4096-byte chunks on interrupt OUT endpoint `0x03`** — NOT a HID Feature report; a raw
+  endpoint, so the driver needs raw-USB/bulk for the chunks while the commands below stay HID
+  Feature reports.
 - **Upload sequence** (Feature-report commands ACK-read, same lock-step as RGB): connect
   handshake → `04 18` (open) → **`04 72 02 …[byte8]=0x10`** (begin image upload; `0x10`=16 = the
   chunk count) → the 16 pixel chunks on ep `0x03`.
