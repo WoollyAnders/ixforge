@@ -67,9 +67,10 @@ pub const FRAME_PIXELS_LEN: usize = LCD_WIDTH * LCD_HEIGHT * 2; // 64,800
 pub const STILL_DURATION: u8 = 0x05;
 
 /// Build the device buffer for one or more frames. Decoded from captures 13
-/// (still) and 18 (animated GIF): a **single 256-byte header** then each frame's
-/// raw 64,800-byte RGB565 pixels back-to-back, padded with `0xFF` to a whole
-/// number of 65,536-byte frame-slots.
+/// (still), 18 (3-frame GIF) and 19 (20-frame GIF): a **single 256-byte header**
+/// then each frame's raw 64,800-byte RGB565 pixels back-to-back, padded with
+/// `0xFF` up to the next **4096-byte chunk boundary** (NOT N×65536 — that only
+/// coincided for small N).
 ///
 /// Header: **byte0 = frame count**, **bytes[1..1+N] = per-frame duration** (ms/2),
 /// rest `0xFF`. (A still is just N=1: `01 05 FF…`.) Frames after the first carry
@@ -79,8 +80,10 @@ pub const STILL_DURATION: u8 = 0x05;
 /// [`STILL_DURATION`]. The image is nearest-neighbour resampled to 240×135.
 pub fn encode(frames: &[SrcFrame], durations: &[u8]) -> Vec<u8> {
     let n = frames.len().max(1);
-    let mut buf = vec![0xffu8; n * FRAME_LEN];
-    buf[0] = n as u8; // frame count
+    // Pad the header + N pixel blocks up to a whole number of 4096-byte chunks.
+    let total = (HEADER_LEN + n * FRAME_PIXELS_LEN).div_ceil(CHUNK_LEN) * CHUNK_LEN;
+    let mut buf = vec![0xffu8; total];
+    buf[0] = n as u8; // frame count (byte0)
     for i in 0..n {
         buf[1 + i] = durations.get(i).copied().unwrap_or(STILL_DURATION);
     }
@@ -106,8 +109,11 @@ pub fn encode_frame(src: &[Color], src_w: usize, src_h: usize) -> Vec<u8> {
     encode(&[(src_w, src_h, src.to_vec())], &[STILL_DURATION])
 }
 
-/// Max frames the begin command's u8 chunk-count byte can address (16·N ≤ 255).
-pub const MAX_FRAMES: usize = 255 / NUM_CHUNKS; // 15
+/// Max frames the protocol can address: the header's `byte0` is a u8 and its
+/// per-frame duration bytes fill the 256-byte header (`byte0` + N durations ≤ 256),
+/// so N ≤ 255. (The chunk count is 16-bit — see [`begin_upload_payload`] — so it's
+/// not the limit.) The device may run out of memory well before this.
+pub const MAX_FRAMES: usize = 255;
 
 /// Split a buffer (one 65,536-byte frame, or N of them concatenated for an
 /// animation) into the 4096-byte chunks streamed on endpoint 0x03.
@@ -125,17 +131,18 @@ pub fn chunks(buf: &[u8]) -> Vec<[u8; CHUNK_LEN]> {
         .collect()
 }
 
-/// The 64-byte "begin upload" command (`04 72`). Decoded from captures 13 (static)
-/// and 18 (animated GIF): **byte2 = `0x02` for a single image, `0x07` for an
-/// animation**, and **byte8 = total chunk count = 16 × `frame_count`** (0x10 for
-/// one frame, 0x30 for three). Sent as a Feature report inside a `04 18` bracket.
-pub fn begin_upload_payload(frame_count: usize) -> [u8; 64] {
-    let frames = frame_count.clamp(1, MAX_FRAMES);
+/// The 64-byte "begin upload" command (`04 72`). Decoded from captures 13/18/19:
+/// **byte2 = `0x02` for a single image, `0x07` for an animation**; **bytes 8–9 =
+/// total chunk count, 16-bit little-endian** (`10 00`=16 for a still, `30 00`=48
+/// for 3 frames, `3d 01`=317 for 20). Sent as a Feature report inside a `04 18`
+/// bracket. `chunk_count` is `buffer.len() / 4096` (see [`encode`]/[`chunks`]).
+pub fn begin_upload_payload(frame_count: usize, chunk_count: usize) -> [u8; 64] {
     let mut p = [0u8; 64];
     p[0] = 0x04;
     p[1] = 0x72;
-    p[2] = if frames > 1 { 0x07 } else { 0x02 };
-    p[8] = (NUM_CHUNKS * frames) as u8;
+    p[2] = if frame_count > 1 { 0x07 } else { 0x02 };
+    p[8] = (chunk_count & 0xff) as u8; // chunk count, low byte
+    p[9] = ((chunk_count >> 8) & 0xff) as u8; // high byte (16-bit LE)
     p
 }
 
@@ -241,7 +248,8 @@ pub fn upload(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<S
     feature(&mk(&[(0, 0x04), (1, 0x02)]))?;
 
     feature(&open_payload())?;
-    feature(&begin_upload_payload(frame_count))?;
+    let chunk_count = buffer.len() / CHUNK_LEN;
+    feature(&begin_upload_payload(frame_count, chunk_count))?;
     std::thread::sleep(std::time::Duration::from_millis(30)); // arm the upload
 
     let mut n = 0;
@@ -340,15 +348,33 @@ mod tests {
     }
 
     #[test]
-    fn begin_upload_static_and_animated() {
-        // Static (1 frame): 04 72 02 …[8]=0x10 (capture 13).
-        let s = begin_upload_payload(1);
+    fn begin_upload_encodes_16bit_chunk_count() {
+        // Still (16 chunks, capture 13): 04 72 02 …[8..10]=10 00.
+        let s = begin_upload_payload(1, 16);
         assert_eq!((s[0], s[1], s[2]), (0x04, 0x72, 0x02), "static type");
-        assert_eq!(s[8], 0x10, "16 chunks");
-        // Animated (3 frames): 04 72 07 …[8]=0x30 (capture 18).
-        let a = begin_upload_payload(3);
+        assert_eq!((s[8], s[9]), (0x10, 0x00), "16 chunks LE");
+        // 3 frames (48 chunks, capture 18): 04 72 07 …[8..10]=30 00.
+        let a = begin_upload_payload(3, 48);
         assert_eq!((a[0], a[1], a[2]), (0x04, 0x72, 0x07), "animated type");
-        assert_eq!(a[8], 0x30, "48 chunks = 16*3");
+        assert_eq!((a[8], a[9]), (0x30, 0x00), "48 chunks LE");
+        // 20 frames (317 chunks, capture 19): 04 72 …[8..10]=3d 01.
+        let l = begin_upload_payload(20, 317);
+        assert_eq!((l[8], l[9]), (0x3d, 0x01), "317 chunks LE (>255, needs both bytes)");
+    }
+
+    #[test]
+    fn long_animation_pads_to_4096_not_frame_slots() {
+        // 20 frames → 256 header + 20×64800 pixels → padded to 317×4096 (capture 19),
+        // NOT 20×65536.
+        let frames: Vec<SrcFrame> = (0..20)
+            .map(|_| (LCD_WIDTH, LCD_HEIGHT, vec![Color::RED; LCD_WIDTH * LCD_HEIGHT]))
+            .collect();
+        let f = encode(&frames, &[0x4b; 20]);
+        assert_eq!(f.len(), 317 * CHUNK_LEN, "padded to next 4096 boundary");
+        assert_ne!(f.len(), 20 * FRAME_LEN, "not N×65536");
+        assert_eq!(f[0], 20, "byte0 = frame count");
+        assert!(f[1..21].iter().all(|&b| b == 0x4b), "20 duration bytes");
+        assert!(f[21..HEADER_LEN].iter().all(|&b| b == 0xff), "header pad");
     }
 
     #[test]
