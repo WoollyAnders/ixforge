@@ -216,8 +216,16 @@ Confirmed by uploading solid red/blue/green + split test GIFs and diffing:
 - **Orientation confirmed:** the buffer's first pixels are the panel's **top row**, left→right
   (top-red/bottom-blue test image displays top-red). No flip/rotate needed.
 - No display/commit command after the last chunk — the image latches on completion.
-- **TODO (future):** GIF animation (multi-frame); text/system-monitor "cards"; whether the
-  256-byte header is fixed or content-dependent (verify with a photo).
+- **Animation (GIF) — DECODED / PROVEN (capture 18):** an N-frame animation is ONE upload —
+  begin `04 72` with **byte2=`0x07`** (vs `0x02` still) and **byte8 = 16·N** (0x30 for 3), then
+  **one buffer** = a 256-byte header + each frame's raw 64,800-byte RGB565 pixels back-to-back
+  (NO per-frame header) + `0xFF` trailer, padded to **N·65536**. Header: **byte0 = frame count**,
+  **bytes[1..1+N] = per-frame duration in ms/2** (400 ms → `0xc8`), rest `0xFF`. (A still is just
+  N=1: `01 05 FF…`.) The device onboard-loops it; playback rate = the per-frame durations. Whole
+  sequence: connect handshake → `04 18` → `04 72` → N·16 chunks (0x84 ACK each) → `04 02`.
+  Verified on hardware for 2- and 3-frame GIFs. Cap: byte8 is a u8, so N ≤ 15 (16·15=240).
+- **TODO (future):** text / system-monitor "cards"; whether the 256-byte header is otherwise
+  content-dependent (verify with a photo).
 
 ### Macros (on-device)
 - Slot count, slot-write framing, event encoding: *TODO*
