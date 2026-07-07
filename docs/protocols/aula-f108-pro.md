@@ -227,8 +227,24 @@ Confirmed by uploading solid red/blue/green + split test GIFs and diffing:
 - **TODO (future):** text / system-monitor "cards"; whether the 256-byte header is otherwise
   content-dependent (verify with a photo).
 
-### Macros (on-device)
-- Slot count, slot-write framing, event encoding: *TODO*
+### Macros (on-device) — **DECODED** (from captures `20`/`21`)
+Same Sonix framing (SET_REPORT Feature, iface 3, `04 xx` command / data / `04 f0` brackets,
+ACK-read, ~33 ms). Setting a macro is two writes: the **program**, then the **keymap binding**.
+- **Macro program** — bracket `04 19` → `04 15 [8]=09` → `90 01` (marker) → data → `04 f0`. The
+  program is a stream of **8-byte events**: `[HID keycode] [flag] [delay16 LE] [00 50 00 00]`,
+  where **flag `0xb0` = key press, `0x30` = key release**, and delay16 is the recorded gap (ms).
+  Zero-terminated (device reads events until zeros). E.g. `a b c` = a↓ a↑ b↓ b↑ c↓ c↑ (keycodes
+  04/05/06). Verified `z`=0x1d too. (An explicit length/count field is unconfirmed — byte16 of the
+  data varied 0x0c↔0x00 across captures; zero-termination is what's relied on.)
+- **Key binding** — bracket `04 27 [8]=09` → **512-byte keymap** (128 entries × 4 bytes) → `04 f0`,
+  **one bracket per layer** (top layer first, then function). Each key's entry is at
+  **offset = `led_index × 4`**; `00 00 00 00` = default, **`06 00 00 00` = "run macro"**. Proven:
+  binding to F11 (led_index 12) → offset 48, F12 (led_index 13) → offset 52. Writing a layer's
+  keymap sets all other keys to default, so IX Forge must own/track the full binding set.
+- `04 11 [8]=09` appears between the program write and the keymap writes (commit/save — role TBD).
+- **OPEN:** multi-macro slotting — captures only had ONE macro (id 0, entry `06 00 00 00`); the
+  macro-id byte in the keymap entry (`06 <id> 00 00`?) and the program's target slot are a
+  best-guess pending a two-macro capture.
 
 ### Knob
 - Does the knob send config reports or just HID consumer events? *TODO*
