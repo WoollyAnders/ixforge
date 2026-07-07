@@ -904,8 +904,6 @@ dependencies = [
  "forge-profiles",
  "forge-registry",
  "forge-transport",
- "hidapi",
- "image",
 ]
 
 [[package]]
@@ -923,6 +921,8 @@ version = "0.1.0"
 dependencies = [
  "forge-core",
  "forge-transport",
+ "hidapi",
+ "image",
  "serde",
  "serde_json",
 ]

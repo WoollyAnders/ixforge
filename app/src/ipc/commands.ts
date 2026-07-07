@@ -43,6 +43,12 @@ export async function setEffect(
   }
 }
 
+/** Upload an image/GIF (raw file bytes) to the device's LCD. Returns a log line. */
+export async function pushLcdImage(deviceId: string, image: number[]): Promise<string> {
+  if (IS_TAURI) return invoke<string>("push_lcd_image", { deviceId, image });
+  return "Browser preview — LCD upload runs on hardware only.";
+}
+
 export async function listPresets(device: string): Promise<Preset[]> {
   return IS_TAURI ? invoke<Preset[]>("list_presets", { device }) : mock.listPresets(device);
 }

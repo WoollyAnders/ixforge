@@ -15,10 +15,5 @@ path = "src/main.rs"
 forge-core = { path = "../forge-core" }
 forge-transport = { path = "../forge-transport" }
 forge-profiles = { path = "../forge-profiles" }
-forge-drivers = { path = "../forge-drivers" }
+forge-drivers = { path = "../forge-drivers", features = ["usb", "imageload"] }
 forge-registry = { path = "../forge-registry" }
-# Decode/resize test images (GIF/PNG/JPG) for the `lcd` command. MIT/Apache.
-image = { version = "0.25", default-features = false, features = ["gif", "png", "jpeg", "bmp"] }
-# Direct HID access for the LCD path (output reports to interface 2, Feature
-# reports to interface 3) — the LCD is a HID interface (HidUsb), so no WinUSB.
-hidapi = { workspace = true }

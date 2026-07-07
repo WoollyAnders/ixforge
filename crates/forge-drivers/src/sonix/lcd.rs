@@ -147,6 +147,140 @@ pub fn open_payload() -> [u8; 64] {
     p
 }
 
+/// Decode image/GIF bytes into frames + per-frame durations (device units = ms/2).
+/// Animated GIFs yield every frame with its delay; other formats yield one still.
+#[cfg(feature = "imageload")]
+pub fn load_frames_from_bytes(data: &[u8]) -> Result<(Vec<SrcFrame>, Vec<u8>), String> {
+    let to_px = |w: u32, h: u32, raw: &[u8]| -> SrcFrame {
+        let px = raw
+            .chunks_exact(4) // RGBA8
+            .map(|p| Color { r: p[0], g: p[1], b: p[2] })
+            .collect();
+        (w as usize, h as usize, px)
+    };
+    if data.starts_with(b"GIF") {
+        use image::{codecs::gif::GifDecoder, AnimationDecoder};
+        let dec = GifDecoder::new(std::io::Cursor::new(data))
+            .map_err(|e| format!("decode gif: {e}"))?;
+        let frames = dec
+            .into_frames()
+            .collect_frames()
+            .map_err(|e| format!("read gif frames: {e}"))?;
+        if !frames.is_empty() {
+            let mut out = Vec::with_capacity(frames.len());
+            let mut durs = Vec::with_capacity(frames.len());
+            for f in &frames {
+                let (num, den) = f.delay().numer_denom_ms();
+                let ms = if den == 0 { 100 } else { num / den.max(1) };
+                let ms = if ms == 0 { 100 } else { ms }; // some GIFs report 0
+                durs.push((ms / 2).clamp(1, 255) as u8); // device unit = ms/2
+                let img = f.buffer();
+                out.push(to_px(img.width(), img.height(), img.as_raw()));
+            }
+            return Ok((out, durs));
+        }
+    }
+    let img = image::load_from_memory(data)
+        .map_err(|e| format!("decode image: {e}"))?
+        .to_rgba8();
+    Ok((vec![to_px(img.width(), img.height(), img.as_raw())], vec![STILL_DURATION]))
+}
+
+/// Read an image/GIF file and decode it (see [`load_frames_from_bytes`]).
+#[cfg(feature = "imageload")]
+pub fn load_frames(path: &str) -> Result<(Vec<SrcFrame>, Vec<u8>), String> {
+    let data = std::fs::read(path).map_err(|e| format!("read {path:?}: {e}"))?;
+    load_frames_from_bytes(&data)
+}
+
+/// Upload a prepared buffer (from [`encode`]) to the LCD over HID. The LCD is a
+/// HID interface (HidUsb), so no raw-USB/WinUSB: commands are Feature reports on
+/// interface 3, pixel chunks are output reports on interface 2 (its OUT endpoint
+/// is `0x03`), each gated by the device's per-chunk `0x84` ACK plus a small floor.
+/// Mirrors the official app's full sequence (connect handshake + trailing `04 02`)
+/// so an animation actually loops. `frame_count` picks the begin command.
+#[cfg(feature = "usb")]
+pub fn upload(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<String, String> {
+    use hidapi::HidApi;
+    let api = HidApi::new().map_err(|e| e.to_string())?;
+    let open_iface = |iface: i32| -> Result<hidapi::HidDevice, String> {
+        api.device_list()
+            .find(|d| {
+                d.vendor_id() == vid && d.product_id() == pid && d.interface_number() == iface
+            })
+            .ok_or_else(|| format!("HID interface {iface} of {vid:04x}:{pid:04x} not found"))?
+            .open_device(&api)
+            .map_err(|e| format!("open interface {iface}: {e}"))
+    };
+    let cmd = open_iface(3)?; // command interface
+    let data = open_iface(2)?; // pixel chunks (its OUT endpoint is 0x03)
+
+    let feature = |payload: &[u8; 64]| -> Result<(), String> {
+        let mut buf = [0u8; 65]; // [report id 0][64-byte payload]
+        buf[1..].copy_from_slice(payload);
+        cmd.send_feature_report(&buf)
+            .map_err(|e| format!("command SET_REPORT: {e}"))?;
+        let mut ack = [0u8; 65];
+        let _ = cmd.get_feature_report(&mut ack); // best-effort lock-step drain
+        Ok(())
+    };
+    let mk = |pairs: &[(usize, u8)]| -> [u8; 64] {
+        let mut p = [0u8; 64];
+        for &(i, v) in pairs {
+            p[i] = v;
+        }
+        p
+    };
+    // Connect handshake (same as the RGB driver) — needed for onboard animation.
+    feature(&mk(&[(0, 0x04), (1, 0x18)]))?;
+    feature(&mk(&[(0, 0x04), (1, 0x28), (8, 0x01)]))?;
+    feature(&mk(&[
+        (1, 0x01), (2, 0x5a), (3, 0x1a), (4, 0x07), (5, 0x01),
+        (6, 0x08), (7, 0x26), (8, 0x09), (10, 0x03), (62, 0xaa), (63, 0x55),
+    ]))?;
+    feature(&mk(&[(0, 0x04), (1, 0x02)]))?;
+
+    feature(&open_payload())?;
+    feature(&begin_upload_payload(frame_count))?;
+    std::thread::sleep(std::time::Duration::from_millis(30)); // arm the upload
+
+    let mut n = 0;
+    let mut ack = [0u8; 64];
+    for chunk in chunks(buffer) {
+        let mut buf = Vec::with_capacity(1 + chunk.len());
+        buf.push(0x00); // report id 0
+        buf.extend_from_slice(&chunk);
+        data.write(&buf)
+            .map_err(|e| format!("write chunk {n}: {e}"))?;
+        let _ = data.read_timeout(&mut ack, 500); // per-chunk ACK (ep 0x84)
+        std::thread::sleep(std::time::Duration::from_millis(20)); // floor
+        n += 1;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150)); // commit last chunk
+    feature(&mk(&[(0, 0x04), (1, 0x02)]))?; // trailing heartbeat — starts playback
+    Ok(format!("uploaded {frame_count} frame(s), {n} chunks"))
+}
+
+/// Decode image/GIF bytes and upload to the LCD (caps frames at [`MAX_FRAMES`]).
+#[cfg(all(feature = "usb", feature = "imageload"))]
+pub fn upload_image_bytes(vid: u16, pid: u16, data: &[u8]) -> Result<String, String> {
+    let (mut frames, mut durations) = load_frames_from_bytes(data)?;
+    if frames.len() > MAX_FRAMES {
+        frames.truncate(MAX_FRAMES);
+        durations.truncate(MAX_FRAMES);
+    }
+    let n = frames.len();
+    let buffer = encode(&frames, &durations);
+    upload(vid, pid, &buffer, n)
+}
+
+/// Load an image/GIF file and upload it to the LCD.
+#[cfg(all(feature = "usb", feature = "imageload"))]
+pub fn upload_image_file(vid: u16, pid: u16, path: &str) -> Result<String, String> {
+    let data = std::fs::read(path).map_err(|e| format!("read {path:?}: {e}"))?;
+    upload_image_bytes(vid, pid, &data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

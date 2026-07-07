@@ -25,5 +25,5 @@ serde_json = { workspace = true }
 forge-core = { path = "../../crates/forge-core" }
 forge-transport = { path = "../../crates/forge-transport" }
 forge-profiles = { path = "../../crates/forge-profiles" }
-forge-drivers = { path = "../../crates/forge-drivers" }
+forge-drivers = { path = "../../crates/forge-drivers", features = ["usb", "imageload"] }
 forge-registry = { path = "../../crates/forge-registry" }

@@ -119,35 +119,15 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "lcd" => {
-            use forge_drivers::sonix::lcd;
             let dev = pick_device(&matched, opts.get("device"))?;
             let path = opts.get("image").ok_or("missing --image <file>")?;
-            let mut frames = load_frames(path)?;
-            // The begin command's chunk count is a u8, so 16*frames <= 255.
-            if frames.len() > lcd::MAX_FRAMES {
-                println!(
-                    "note: {} frames > device max {}, using the first {}",
-                    frames.len(),
-                    lcd::MAX_FRAMES,
-                    lcd::MAX_FRAMES
-                );
-                frames.truncate(lcd::MAX_FRAMES);
-            }
             let (vid, pid) = (dev.profile.matcher.vid, dev.profile.matcher.pid);
-            let (w, h) = (frames[0].0, frames[0].1);
-            let nframes = frames.len();
             println!(
-                "uploading {path} ({w}x{h}, {nframes} frame(s)) to the LCD of {} [{vid:04x}:{pid:04x}]",
+                "uploading {path} to the LCD of {} [{vid:04x}:{pid:04x}]",
                 dev.profile.display_name
             );
-            // One header + N raw pixel frames + trailer (see lcd::encode).
-            let durations: Vec<u8> = frames.iter().map(|f| f.3).collect();
-            let src: Vec<lcd::SrcFrame> =
-                frames.into_iter().map(|(fw, fh, px, _)| (fw, fh, px)).collect();
-            let buffer = lcd::encode(&src, &durations);
-            let log = upload_lcd(vid, pid, &buffer, nframes)?;
-            print!("{log}");
-            println!("ok: LCD image sent");
+            let log = forge_drivers::sonix::lcd::upload_image_file(vid, pid, path)?;
+            println!("ok: {log}");
             Ok(())
         }
         _ => {
@@ -183,130 +163,6 @@ fn hold_secs(opts: &HashMap<String, String>) -> Option<f64> {
     opts.get("hold").and_then(|s| s.parse().ok())
 }
 
-/// Upload a full LCD frame over HID. The LCD is a HID interface (HidUsb), so no
-/// raw-USB/WinUSB is needed: the begin-upload commands go to **interface 3** as
-/// Feature reports (each ACK-read, like the RGB path), then the 16 pixel chunks
-/// go to **interface 2** as output reports (its OUT endpoint is `0x03`).
-fn upload_lcd(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<String, String> {
-    use forge_drivers::sonix::lcd;
-    use hidapi::HidApi;
-
-    let api = HidApi::new().map_err(|e| e.to_string())?;
-    let open_iface = |iface: i32| -> Result<hidapi::HidDevice, String> {
-        api.device_list()
-            .find(|d| {
-                d.vendor_id() == vid && d.product_id() == pid && d.interface_number() == iface
-            })
-            .ok_or_else(|| format!("HID interface {iface} of {vid:04x}:{pid:04x} not found"))?
-            .open_device(&api)
-            .map_err(|e| format!("open interface {iface}: {e}"))
-    };
-    let cmd = open_iface(3)?; // begin-upload commands
-    let data = open_iface(2)?; // pixel chunks (its OUT endpoint is 0x03)
-
-    // Feature report = [report id 0][64-byte payload]; drain the ACK afterward.
-    let feature = |payload: &[u8; 64]| -> Result<(), String> {
-        let mut buf = [0u8; 65];
-        buf[1..].copy_from_slice(payload);
-        cmd.send_feature_report(&buf)
-            .map_err(|e| format!("command SET_REPORT: {e}"))?;
-        let mut ack = [0u8; 65];
-        let _ = cmd.get_feature_report(&mut ack); // best-effort lock-step drain
-        Ok(())
-    };
-    let mk = |pairs: &[(usize, u8)]| -> [u8; 64] {
-        let mut p = [0u8; 64];
-        for &(i, v) in pairs {
-            p[i] = v;
-        }
-        p
-    };
-    // Replicate the official app's full sequence. Static display works without
-    // this, but onboard GIF *animation* does not — the begin+chunks alone leave
-    // the device showing frame 1. The connect handshake (same as the RGB driver)
-    // before, and the trailing 04 02 heartbeat after, are what make it loop.
-    feature(&mk(&[(0, 0x04), (1, 0x18)]))?;
-    feature(&mk(&[(0, 0x04), (1, 0x28), (8, 0x01)]))?;
-    feature(&mk(&[
-        (1, 0x01), (2, 0x5a), (3, 0x1a), (4, 0x07), (5, 0x01),
-        (6, 0x08), (7, 0x26), (8, 0x09), (10, 0x03), (62, 0xaa), (63, 0x55),
-    ]))?;
-    feature(&mk(&[(0, 0x04), (1, 0x02)]))?;
-
-    feature(&lcd::open_payload())?;
-    feature(&lcd::begin_upload_payload(frame_count))?;
-    std::thread::sleep(std::time::Duration::from_millis(30)); // let the device arm the upload
-
-    // Output report = [report id 0][4096-byte chunk] to interface 2. After each
-    // chunk, wait for the device's per-chunk ACK on interface 2's IN endpoint
-    // (ep 0x84) — the official app's flow control — plus a small floor delay, so a
-    // stale/early ACK can't let us overrun the endpoint (a dropped chunk stalls
-    // the device at "93%"/"81%").
-    let mut n = 0;
-    let mut ack = [0u8; 64];
-    for chunk in lcd::chunks(buffer) {
-        let mut buf = Vec::with_capacity(1 + chunk.len());
-        buf.push(0x00); // report id 0
-        buf.extend_from_slice(&chunk);
-        data.write(&buf)
-            .map_err(|e| format!("write chunk {n}: {e}"))?;
-        let _ = data.read_timeout(&mut ack, 500); // block until the ACK (or 500ms)
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        n += 1;
-    }
-    // Let the device commit the final chunk before we drop the handles.
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    // Trailing heartbeat — the official app sends this after the chunks; it's what
-    // starts the animation looping (without it a multi-frame upload sits on frame 1).
-    feature(&mk(&[(0, 0x04), (1, 0x02)]))?;
-    Ok(format!(
-        "sent open + begin-upload ({frame_count} frame(s), iface 3) and {n} pixel chunks (iface 2)\n"
-    ))
-}
-
-/// A source frame for the LCD: `(width, height, RGB pixels, duration)` where
-/// duration is in device units (ms/2).
-type SrcFrame = (usize, usize, Vec<Color>, u8);
-
-/// Load an image's frames. Animated GIFs yield all frames with their per-frame
-/// delays (for LCD animation); everything else is one still frame.
-fn load_frames(path: &str) -> Result<Vec<SrcFrame>, String> {
-    use forge_drivers::sonix::lcd::STILL_DURATION;
-    let to_px = |w: u32, h: u32, raw: &[u8], dur: u8| -> SrcFrame {
-        let px = raw
-            .chunks_exact(4) // RGBA8
-            .map(|p| Color { r: p[0], g: p[1], b: p[2] })
-            .collect();
-        (w as usize, h as usize, px, dur)
-    };
-    if path.to_ascii_lowercase().ends_with(".gif") {
-        use image::{codecs::gif::GifDecoder, AnimationDecoder};
-        let file = std::fs::File::open(path).map_err(|e| format!("open {path:?}: {e}"))?;
-        let dec = GifDecoder::new(std::io::BufReader::new(file))
-            .map_err(|e| format!("decode gif: {e}"))?;
-        let frames = dec
-            .into_frames()
-            .collect_frames()
-            .map_err(|e| format!("read gif frames: {e}"))?;
-        if !frames.is_empty() {
-            return Ok(frames
-                .iter()
-                .map(|f| {
-                    let (num, den) = f.delay().numer_denom_ms();
-                    let ms = if den == 0 { 100 } else { num / den.max(1) };
-                    let ms = if ms == 0 { 100 } else { ms }; // some GIFs report 0
-                    let dur = (ms / 2).clamp(1, 255) as u8; // device unit = ms/2
-                    let img = f.buffer();
-                    to_px(img.width(), img.height(), img.as_raw(), dur)
-                })
-                .collect());
-        }
-    }
-    let img = image::open(path)
-        .map_err(|e| format!("open image {path:?}: {e}"))?
-        .to_rgba8();
-    Ok(vec![to_px(img.width(), img.height(), img.as_raw(), STILL_DURATION)])
-}
 
 /// Parse a decimal or `0x`-prefixed hex integer.
 fn parse_int(s: &str) -> Option<u32> {

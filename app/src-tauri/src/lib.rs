@@ -185,6 +185,41 @@ async fn set_effect(
     .map_err(|e| e.to_string())?
 }
 
+/// Look up a matched device's USB VID/PID by its `device_id`.
+fn vid_pid_for(catalog: &ProfileCatalog, id: &str) -> Result<(u16, u16), String> {
+    let backend = HidapiBackend::new().map_err(|e| e.to_string())?;
+    let infos = backend.enumerate().map_err(|e| e.to_string())?;
+    match_devices(infos, catalog)
+        .iter()
+        .find(|m| device_id(&m.info).0 == id)
+        .map(|m| (m.profile.matcher.vid, m.profile.matcher.pid))
+        .ok_or_else(|| format!("device not found: {id}"))
+}
+
+/// Upload an image or animated GIF to the 1.14" LCD. The image bytes come from the
+/// UI (a file the user picked). The LCD uses interfaces 2+3 over raw HID, and the
+/// RGB live-stream worker holds interface 3, so we drop the active session first
+/// (releasing it); the next RGB command lazily reopens it.
+#[tauri::command]
+async fn push_lcd_image(
+    state: tauri::State<'_, AppState>,
+    device_id: String,
+    image: Vec<u8>,
+) -> Result<String, String> {
+    let catalog = state.catalog.clone();
+    let active = state.active.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (vid, pid) = vid_pid_for(&catalog, &device_id)?;
+        // Release interface 3 (held by the streaming worker) before the upload.
+        if let Ok(mut guard) = active.lock() {
+            *guard = None;
+        }
+        forge_drivers::sonix::lcd::upload_image_bytes(vid, pid, &image)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // --- User lighting presets (persisted to the app config dir) ----------------
 
 fn preset_store(app: &tauri::AppHandle) -> Result<PresetStore, String> {
@@ -275,6 +310,7 @@ pub fn run() {
             get_capabilities,
             set_rgb,
             set_effect,
+            push_lcd_image,
             list_presets,
             save_preset,
             delete_preset

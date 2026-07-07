@@ -11,6 +11,11 @@ authors.workspace = true
 forge-core = { path = "../forge-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Optional, feature-gated so the hardware-free CI (default features) needn't build
+# them: `usb` = raw HID transport for the LCD (hidapi, needs libudev on Linux);
+# `imageload` = decode/resize image + GIF files (image crate, pure-Rust).
+hidapi = { workspace = true, optional = true }
+image = { version = "0.25", default-features = false, features = ["gif", "png", "jpeg", "bmp"], optional = true }
 
 [dev-dependencies]
 # MockTransport for golden-byte tests; no real HID backend needed.
@@ -20,3 +25,5 @@ forge-transport = { path = "../forge-transport", default-features = false }
 default = ["sinowealth", "sonix"]
 sinowealth = []
 sonix = []
+usb = ["dep:hidapi"]
+imageload = ["dep:image"]
