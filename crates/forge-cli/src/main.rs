@@ -214,6 +214,25 @@ fn upload_lcd(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<S
         let _ = cmd.get_feature_report(&mut ack); // best-effort lock-step drain
         Ok(())
     };
+    let mk = |pairs: &[(usize, u8)]| -> [u8; 64] {
+        let mut p = [0u8; 64];
+        for &(i, v) in pairs {
+            p[i] = v;
+        }
+        p
+    };
+    // Replicate the official app's full sequence. Static display works without
+    // this, but onboard GIF *animation* does not — the begin+chunks alone leave
+    // the device showing frame 1. The connect handshake (same as the RGB driver)
+    // before, and the trailing 04 02 heartbeat after, are what make it loop.
+    feature(&mk(&[(0, 0x04), (1, 0x18)]))?;
+    feature(&mk(&[(0, 0x04), (1, 0x28), (8, 0x01)]))?;
+    feature(&mk(&[
+        (1, 0x01), (2, 0x5a), (3, 0x1a), (4, 0x07), (5, 0x01),
+        (6, 0x08), (7, 0x26), (8, 0x09), (10, 0x03), (62, 0xaa), (63, 0x55),
+    ]))?;
+    feature(&mk(&[(0, 0x04), (1, 0x02)]))?;
+
     feature(&lcd::open_payload())?;
     feature(&lcd::begin_upload_payload(frame_count))?;
     std::thread::sleep(std::time::Duration::from_millis(30)); // let the device arm the upload
@@ -237,6 +256,9 @@ fn upload_lcd(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<S
     }
     // Let the device commit the final chunk before we drop the handles.
     std::thread::sleep(std::time::Duration::from_millis(150));
+    // Trailing heartbeat — the official app sends this after the chunks; it's what
+    // starts the animation looping (without it a multi-frame upload sits on frame 1).
+    feature(&mk(&[(0, 0x04), (1, 0x02)]))?;
     Ok(format!(
         "sent open + begin-upload ({frame_count} frame(s), iface 3) and {n} pixel chunks (iface 2)\n"
     ))
