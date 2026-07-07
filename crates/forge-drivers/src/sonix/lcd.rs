@@ -56,25 +56,54 @@ fn sample(src: &[Color], src_w: usize, src_h: usize, x: usize, y: usize) -> Colo
     src.get(sy * src_w + sx).copied().unwrap_or(Color::BLACK)
 }
 
-/// Build the full 65,536-byte device buffer for a source image (`src_w×src_h`,
-/// row-major RGB). The image is nearest-neighbour resampled to 240×135.
-pub fn encode_frame(src: &[Color], src_w: usize, src_h: usize) -> Vec<u8> {
-    let mut buf = vec![0xffu8; FRAME_LEN]; // header/trailer padding is 0xFF
-    buf[0] = 0x01;
-    buf[1] = 0x05;
-    // header bytes [2..256) stay 0xFF (already filled)
+/// One source frame: `(width, height, row-major RGB pixels)`.
+pub type SrcFrame = (usize, usize, Vec<Color>);
+
+/// Bytes of RGB565 pixel data per frame (240×135×2).
+pub const FRAME_PIXELS_LEN: usize = LCD_WIDTH * LCD_HEIGHT * 2; // 64,800
+
+/// Default per-frame duration for a single still image (device units = ms/2;
+/// `0x05` matches the official app's static upload, capture 13).
+pub const STILL_DURATION: u8 = 0x05;
+
+/// Build the device buffer for one or more frames. Decoded from captures 13
+/// (still) and 18 (animated GIF): a **single 256-byte header** then each frame's
+/// raw 64,800-byte RGB565 pixels back-to-back, padded with `0xFF` to a whole
+/// number of 65,536-byte frame-slots.
+///
+/// Header: **byte0 = frame count**, **bytes[1..1+N] = per-frame duration** (ms/2),
+/// rest `0xFF`. (A still is just N=1: `01 05 FF…`.) Frames after the first carry
+/// no header — that was the bug that left animations stuck on frame 0.
+///
+/// `durations` is in device units (ms/2); missing entries default to
+/// [`STILL_DURATION`]. The image is nearest-neighbour resampled to 240×135.
+pub fn encode(frames: &[SrcFrame], durations: &[u8]) -> Vec<u8> {
+    let n = frames.len().max(1);
+    let mut buf = vec![0xffu8; n * FRAME_LEN];
+    buf[0] = n as u8; // frame count
+    for i in 0..n {
+        buf[1 + i] = durations.get(i).copied().unwrap_or(STILL_DURATION);
+    }
+    // header bytes [1+n .. 256) stay 0xFF
     let mut off = HEADER_LEN;
-    for y in 0..LCD_HEIGHT {
-        for x in 0..LCD_WIDTH {
-            let [lo, hi] = rgb565_le(sample(src, src_w, src_h, x, y));
-            buf[off] = lo;
-            buf[off + 1] = hi;
-            off += 2;
+    for (w, h, px) in frames {
+        for y in 0..LCD_HEIGHT {
+            for x in 0..LCD_WIDTH {
+                let [lo, hi] = rgb565_le(sample(px, *w, *h, x, y));
+                buf[off] = lo;
+                buf[off + 1] = hi;
+                off += 2;
+            }
         }
     }
-    // trailer [65056..65536) stays 0xFF
-    debug_assert_eq!(off, HEADER_LEN + LCD_WIDTH * LCD_HEIGHT * 2);
+    // remaining bytes (trailer) stay 0xFF
+    debug_assert_eq!(off, HEADER_LEN + n * FRAME_PIXELS_LEN);
     buf
+}
+
+/// Convenience for a single still image (N=1). See [`encode`].
+pub fn encode_frame(src: &[Color], src_w: usize, src_h: usize) -> Vec<u8> {
+    encode(&[(src_w, src_h, src.to_vec())], &[STILL_DURATION])
 }
 
 /// Max frames the begin command's u8 chunk-count byte can address (16·N ≤ 255).
@@ -143,6 +172,28 @@ mod tests {
         let reds = px.chunks_exact(2).filter(|w| w == &[0x00, 0xf8]).count();
         assert_eq!(reds, LCD_WIDTH * LCD_HEIGHT, "32400 red pixels");
         assert!(f[65056..].iter().all(|&b| b == 0xff), "480-byte 0xFF trailer");
+    }
+
+    #[test]
+    fn animation_layout_matches_capture_18() {
+        // 3 frames R/G/B, durations 0xc8 each → one header + 3 raw pixel blocks +
+        // 0xFF trailer, total 3×65536 (capture 18).
+        let red = (LCD_WIDTH, LCD_HEIGHT, vec![Color::RED; LCD_WIDTH * LCD_HEIGHT]);
+        let grn = (LCD_WIDTH, LCD_HEIGHT, vec![Color::GREEN; LCD_WIDTH * LCD_HEIGHT]);
+        let blu = (LCD_WIDTH, LCD_HEIGHT, vec![Color::BLUE; LCD_WIDTH * LCD_HEIGHT]);
+        let f = encode(&[red, grn, blu], &[0xc8, 0xc8, 0xc8]);
+        assert_eq!(f.len(), 3 * FRAME_LEN, "3 frame-slots");
+        assert_eq!(&f[0..4], &[0x03, 0xc8, 0xc8, 0xc8], "byte0=frames, then durations");
+        assert!(f[4..HEADER_LEN].iter().all(|&b| b == 0xff), "header pad 0xFF");
+        // pixel regions back-to-back with NO per-frame header
+        let at = |off: usize| [f[off], f[off + 1]];
+        assert_eq!(at(HEADER_LEN), [0x00, 0xf8], "frame0 red");
+        assert_eq!(at(HEADER_LEN + FRAME_PIXELS_LEN), [0xe0, 0x07], "frame1 green (no header)");
+        assert_eq!(at(HEADER_LEN + 2 * FRAME_PIXELS_LEN), [0x1f, 0x00], "frame2 blue (no header)");
+        assert!(
+            f[HEADER_LEN + 3 * FRAME_PIXELS_LEN..].iter().all(|&b| b == 0xff),
+            "0xFF trailer"
+        );
     }
 
     #[test]

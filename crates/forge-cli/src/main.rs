@@ -135,17 +135,17 @@ fn run() -> Result<(), String> {
             }
             let (vid, pid) = (dev.profile.matcher.vid, dev.profile.matcher.pid);
             let (w, h) = (frames[0].0, frames[0].1);
+            let nframes = frames.len();
             println!(
-                "uploading {path} ({w}x{h}, {} frame(s)) to the LCD of {} [{vid:04x}:{pid:04x}]",
-                frames.len(),
+                "uploading {path} ({w}x{h}, {nframes} frame(s)) to the LCD of {} [{vid:04x}:{pid:04x}]",
                 dev.profile.display_name
             );
-            // Encode every frame and concatenate; each frame is one 65,536-byte buffer.
-            let mut buffer = Vec::with_capacity(frames.len() * lcd::FRAME_LEN);
-            for (fw, fh, px) in &frames {
-                buffer.extend_from_slice(&lcd::encode_frame(px, *fw, *fh));
-            }
-            let log = upload_lcd(vid, pid, &buffer, frames.len())?;
+            // One header + N raw pixel frames + trailer (see lcd::encode).
+            let durations: Vec<u8> = frames.iter().map(|f| f.3).collect();
+            let src: Vec<lcd::SrcFrame> =
+                frames.into_iter().map(|(fw, fh, px, _)| (fw, fh, px)).collect();
+            let buffer = lcd::encode(&src, &durations);
+            let log = upload_lcd(vid, pid, &buffer, nframes)?;
             print!("{log}");
             println!("ok: LCD image sent");
             Ok(())
@@ -264,15 +264,20 @@ fn upload_lcd(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<S
     ))
 }
 
-/// Load an image's frames as `(width, height, RGB pixels)`. Animated GIFs yield
-/// all frames (for LCD animation); everything else is a single frame.
-fn load_frames(path: &str) -> Result<Vec<(usize, usize, Vec<Color>)>, String> {
-    let to_px = |w: u32, h: u32, raw: &[u8]| -> (usize, usize, Vec<Color>) {
+/// A source frame for the LCD: `(width, height, RGB pixels, duration)` where
+/// duration is in device units (ms/2).
+type SrcFrame = (usize, usize, Vec<Color>, u8);
+
+/// Load an image's frames. Animated GIFs yield all frames with their per-frame
+/// delays (for LCD animation); everything else is one still frame.
+fn load_frames(path: &str) -> Result<Vec<SrcFrame>, String> {
+    use forge_drivers::sonix::lcd::STILL_DURATION;
+    let to_px = |w: u32, h: u32, raw: &[u8], dur: u8| -> SrcFrame {
         let px = raw
             .chunks_exact(4) // RGBA8
             .map(|p| Color { r: p[0], g: p[1], b: p[2] })
             .collect();
-        (w as usize, h as usize, px)
+        (w as usize, h as usize, px, dur)
     };
     if path.to_ascii_lowercase().ends_with(".gif") {
         use image::{codecs::gif::GifDecoder, AnimationDecoder};
@@ -287,8 +292,12 @@ fn load_frames(path: &str) -> Result<Vec<(usize, usize, Vec<Color>)>, String> {
             return Ok(frames
                 .iter()
                 .map(|f| {
+                    let (num, den) = f.delay().numer_denom_ms();
+                    let ms = if den == 0 { 100 } else { num / den.max(1) };
+                    let ms = if ms == 0 { 100 } else { ms }; // some GIFs report 0
+                    let dur = (ms / 2).clamp(1, 255) as u8; // device unit = ms/2
                     let img = f.buffer();
-                    to_px(img.width(), img.height(), img.as_raw())
+                    to_px(img.width(), img.height(), img.as_raw(), dur)
                 })
                 .collect());
         }
@@ -296,7 +305,7 @@ fn load_frames(path: &str) -> Result<Vec<(usize, usize, Vec<Color>)>, String> {
     let img = image::open(path)
         .map_err(|e| format!("open image {path:?}: {e}"))?
         .to_rgba8();
-    Ok(vec![to_px(img.width(), img.height(), img.as_raw())])
+    Ok(vec![to_px(img.width(), img.height(), img.as_raw(), STILL_DURATION)])
 }
 
 /// Parse a decimal or `0x`-prefixed hex integer.
