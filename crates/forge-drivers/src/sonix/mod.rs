@@ -36,6 +36,9 @@ use crate::framing::{resolve_zone_keys, rgb_layout};
 /// Image framing + raw-USB upload for the 1.14" LCD.
 pub mod lcd;
 
+/// On-device macro program + keymap binding.
+pub mod macros;
+
 const REPORT_ID: u8 = 0x00;
 const REPORT_LEN: usize = 64;
 const SLOTS: usize = 128; // color buffer is indexed by led_index (== frame slot)

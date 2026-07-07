@@ -130,6 +130,46 @@ fn run() -> Result<(), String> {
             println!("ok: {log}");
             Ok(())
         }
+        "macro" => {
+            use forge_drivers::sonix::macros::{KeyEvent, Layer};
+            let dev = pick_device(&matched, opts.get("device"))?;
+            let text = opts.get("keys").ok_or("missing --keys <text> (e.g. abc)")?;
+            let keyname = opts.get("key").ok_or("missing --key <KEYID> (e.g. KC_F12)")?;
+            let layer = match opts.get("layer").map(String::as_str) {
+                Some("fn") | Some("function") => Layer::Function,
+                _ => Layer::Top,
+            };
+            let led = dev
+                .profile
+                .capabilities
+                .iter()
+                .find_map(|c| match c {
+                    forge_core::Capability::Rgb(r) => r
+                        .layout
+                        .keys
+                        .iter()
+                        .find(|k| k.id.0 == *keyname)
+                        .and_then(|k| k.led_index),
+                    _ => None,
+                })
+                .ok_or_else(|| format!("key {keyname:?} not found or has no led_index"))?;
+            let mut events = Vec::new();
+            for ch in text.chars() {
+                let code = char_to_hid(ch).ok_or_else(|| format!("unsupported char {ch:?}"))?;
+                events.push(KeyEvent::down(code, 40));
+                events.push(KeyEvent::up(code, 40));
+            }
+            let (vid, pid) = (dev.profile.matcher.vid, dev.profile.matcher.pid);
+            println!(
+                "writing {}-key macro {text:?} -> {keyname} (led {led}, {layer:?}) on {}",
+                text.chars().count(),
+                dev.profile.display_name
+            );
+            let log =
+                forge_drivers::sonix::macros::write_macro(vid, pid, &events, led as u8, layer)?;
+            println!("ok: {log}");
+            Ok(())
+        }
         _ => {
             println!("{USAGE}");
             Ok(())
@@ -163,6 +203,19 @@ fn hold_secs(opts: &HashMap<String, String>) -> Option<f64> {
     opts.get("hold").and_then(|s| s.parse().ok())
 }
 
+
+/// Map a plain character to its US-layout HID usage code (for `macro --keys`).
+/// Covers letters, digits, and space — enough for bring-up testing.
+fn char_to_hid(ch: char) -> Option<u8> {
+    match ch {
+        'a'..='z' => Some(0x04 + (ch as u8 - b'a')),
+        'A'..='Z' => Some(0x04 + (ch as u8 - b'A')),
+        '1'..='9' => Some(0x1e + (ch as u8 - b'1')),
+        '0' => Some(0x27),
+        ' ' => Some(0x2c),
+        _ => None,
+    }
+}
 
 /// Parse a decimal or `0x`-prefixed hex integer.
 fn parse_int(s: &str) -> Option<u32> {
@@ -283,6 +336,10 @@ USAGE:
   forge-cli probe [--from <n>] [--to <n>] [--dwell <secs>] [--color <rrggbb>] [--device <id>]
   forge-cli effect --name <id> [--speed 1-5] [--brightness 1-5] [--color <rrggbb>] [--device <id>]
   forge-cli lcd --image <file.gif|png|jpg> [--device <id>]
+  forge-cli macro --keys <text> --key <KEYID> [--layer top|fn] [--device <id>]
+
+  macro: record a text macro (e.g. --keys abc) and bind it to a key (e.g.
+         --key KC_F12) on the top or Fn layer. Writes the macro program + keymap.
 
   lcd: upload an image to the 1.14\" screen (resized to 240x135, RGB565). Uses a
        raw USB endpoint via nusb — on Windows the LCD interface may need a WinUSB
