@@ -52,22 +52,39 @@ impl KeyEvent {
     }
 }
 
-/// Build the macro **program** payload (the data streamed inside the `04 15`
-/// bracket, after the `90 01` marker): byte16 = event count ×2, events from
-/// byte26, zero-padded to a whole number of 64-byte reports.
+/// Default size of the macro-program buffer (9 × 64 = 576, as the app sends).
+pub const PROGRAM_LEN: usize = 576;
+const COUNT_OFF: usize = 400; // event count ×2
+const EVENTS_OFF: usize = 410; // first 8-byte event
+
+/// Build the macro **program** buffer sent after `04 15` (as 9× 64-byte reports).
+/// Decoded from captures 20/21: `90 01` at byte0, **event count ×2 at byte400**,
+/// **events from byte410**, `aa 55` at the last two bytes. Grows past 576 (in
+/// 64-byte steps) only if the events don't fit.
 pub fn encode_program(events: &[KeyEvent]) -> Vec<u8> {
-    const EVENTS_OFF: usize = 26;
-    const COUNT_OFF: usize = 16;
-    let len = EVENTS_OFF + events.len() * 8;
-    let padded = len.div_ceil(REPORT_LEN) * REPORT_LEN;
-    let mut buf = vec![0u8; padded.max(REPORT_LEN)];
+    let needed = EVENTS_OFF + events.len() * 8 + 2; // + trailing aa55
+    let len = needed.max(PROGRAM_LEN).div_ceil(REPORT_LEN) * REPORT_LEN;
+    let mut buf = vec![0u8; len];
+    buf[0] = 0x90;
+    buf[1] = 0x01;
     buf[COUNT_OFF] = (events.len() * 2) as u8; // e.g. 6 events -> 0x0c
     let mut off = EVENTS_OFF;
     for e in events {
         buf[off..off + 8].copy_from_slice(&e.bytes());
         off += 8;
     }
+    buf[len - 2] = 0xaa;
+    buf[len - 1] = 0x55;
     buf
+}
+
+/// A generic 576-byte command buffer: all zero except `aa 55` at the end. Used
+/// for the `04 11` commit (its data region is empty apart from the marker).
+fn commit_buffer() -> [u8; PROGRAM_LEN] {
+    let mut b = [0u8; PROGRAM_LEN];
+    b[PROGRAM_LEN - 2] = 0xaa;
+    b[PROGRAM_LEN - 1] = 0x55;
+    b
 }
 
 /// Build one layer's 512-byte keymap table from `(led_index, macro?)` entries:
@@ -129,33 +146,37 @@ pub fn write_macro(
         p
     };
 
-    // Connect handshake (same as RGB/LCD).
+    // Connect handshake. NB byte10 = 0x02 for the macro path (0x03 is the RGB one).
     send(&mk(&[(0, 0x04), (1, 0x18)]))?;
     send(&mk(&[(0, 0x04), (1, 0x28), (8, 0x01)]))?;
     send(&mk(&[
         (1, 0x01), (2, 0x5a), (3, 0x1a), (4, 0x07), (5, 0x01),
-        (6, 0x08), (7, 0x26), (8, 0x09), (10, 0x03), (62, 0xaa), (63, 0x55),
+        (6, 0x08), (7, 0x26), (8, 0x09), (10, 0x02), (62, 0xaa), (63, 0x55),
     ]))?;
     send(&mk(&[(0, 0x04), (1, 0x02)]))?;
 
-    // Program write: 04 19 / 04 15 / 90 01 marker / data reports.
-    send(&mk(&[(0, 0x04), (1, 0x19)]))?;
-    send(&mk(&[(0, 0x04), (1, 0x15), (8, 0x09)]))?;
-    send(&mk(&[(0, 0x90), (1, 0x01)]))?;
+    // Program write: `04 19` / `04 15` then the 576-byte program buffer as 9
+    // reports (90 01 @0, count @400, events @410, aa55 at the end), NO 04 f0.
+    // The app writes it twice — replicate.
     let program = encode_program(events);
-    for chunk in program.chunks(REPORT_LEN) {
-        send(chunk)?;
+    for _ in 0..2 {
+        send(&mk(&[(0, 0x04), (1, 0x19)]))?;
+        send(&mk(&[(0, 0x04), (1, 0x15), (8, 0x09)]))?;
+        for chunk in program.chunks(REPORT_LEN) {
+            send(chunk)?;
+        }
     }
-    send(&mk(&[]))?; // zero terminator
-    send(&mk(&[(0, 0x04), (1, 0xf0)]))?;
 
-    // 04 11 (commit).
+    // 04 11 commit: 04 18 / 04 11 / empty 576-byte buffer (aa55 at end) / 04 f0.
     send(&mk(&[(0, 0x04), (1, 0x18)]))?;
     send(&mk(&[(0, 0x04), (1, 0x11), (8, 0x09)]))?;
-    send(&mk(&[]))?;
+    for chunk in commit_buffer().chunks(REPORT_LEN) {
+        send(chunk)?;
+    }
     send(&mk(&[(0, 0x04), (1, 0xf0)]))?;
 
-    // Keymap write, one 04 27 bracket per layer (top first, then function).
+    // Keymap write, one 04 27 bracket per layer (top first, then function): the
+    // 512-byte table as 8 reports + a trailing aa55 commit report.
     for lyr in [Layer::Top, Layer::Function] {
         let km = if lyr == layer { encode_keymap(&[led_index]) } else { [0u8; KEYMAP_LEN] };
         send(&mk(&[(0, 0x04), (1, 0x18)]))?;
@@ -163,8 +184,7 @@ pub fn write_macro(
         for chunk in km.chunks(REPORT_LEN) {
             send(chunk)?;
         }
-        // commit report carries the aa55 marker at bytes 62-63.
-        send(&mk(&[(62, 0xaa), (63, 0x55)]))?;
+        send(&mk(&[(62, 0xaa), (63, 0x55)]))?; // commit marker
         send(&mk(&[(0, 0x04), (1, 0xf0)]))?;
     }
     Ok(format!(
@@ -194,10 +214,12 @@ mod tests {
             KeyEvent::down(0x06, 0x0040), KeyEvent::up(0x06, 0x000a),
         ];
         let p = encode_program(&evs);
-        assert_eq!(p[16], 0x0c, "count = 6 events × 2");
-        assert_eq!(&p[26..30], &[0x04, 0xb0, 0x57, 0x00], "first event = a down");
-        assert_eq!(&p[26 + 40..26 + 44], &[0x06, 0x30, 0x0a, 0x00], "last event = c up");
-        assert_eq!(p.len() % REPORT_LEN, 0, "padded to whole reports");
+        assert_eq!(p.len(), PROGRAM_LEN, "9×64 buffer");
+        assert_eq!((p[0], p[1]), (0x90, 0x01), "90 01 marker at byte0");
+        assert_eq!(p[COUNT_OFF], 0x0c, "count = 6 events × 2 at byte400");
+        assert_eq!(&p[EVENTS_OFF..EVENTS_OFF + 4], &[0x04, 0xb0, 0x57, 0x00], "first event = a down");
+        assert_eq!(&p[EVENTS_OFF + 40..EVENTS_OFF + 44], &[0x06, 0x30, 0x0a, 0x00], "last event = c up");
+        assert_eq!((p[PROGRAM_LEN - 2], p[PROGRAM_LEN - 1]), (0xaa, 0x55), "aa55 at end");
     }
 
     #[test]
