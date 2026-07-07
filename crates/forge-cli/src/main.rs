@@ -216,11 +216,13 @@ fn upload_lcd(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<S
     };
     feature(&lcd::open_payload())?;
     feature(&lcd::begin_upload_payload(frame_count))?;
+    std::thread::sleep(std::time::Duration::from_millis(30)); // let the device arm the upload
 
     // Output report = [report id 0][4096-byte chunk] to interface 2. After each
     // chunk, wait for the device's per-chunk ACK on interface 2's IN endpoint
-    // (ep 0x84) before sending the next — this is the official app's flow control.
-    // (A fixed delay only guessed at it: chunks dropped at "81%" then "93%".)
+    // (ep 0x84) — the official app's flow control — plus a small floor delay, so a
+    // stale/early ACK can't let us overrun the endpoint (a dropped chunk stalls
+    // the device at "93%"/"81%").
     let mut n = 0;
     let mut ack = [0u8; 64];
     for chunk in lcd::chunks(buffer) {
@@ -230,8 +232,11 @@ fn upload_lcd(vid: u16, pid: u16, buffer: &[u8], frame_count: usize) -> Result<S
         data.write(&buf)
             .map_err(|e| format!("write chunk {n}: {e}"))?;
         let _ = data.read_timeout(&mut ack, 500); // block until the ACK (or 500ms)
+        std::thread::sleep(std::time::Duration::from_millis(20));
         n += 1;
     }
+    // Let the device commit the final chunk before we drop the handles.
+    std::thread::sleep(std::time::Duration::from_millis(150));
     Ok(format!(
         "sent open + begin-upload ({frame_count} frame(s), iface 3) and {n} pixel chunks (iface 2)\n"
     ))
