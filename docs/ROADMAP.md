@@ -84,10 +84,11 @@ golden tests cover it. VID `0x0C45` / PID `0x800A`, interface 3, 64-byte Feature
 - **M1 — RGB breadth:** ✅ **DONE** — UI/persistence/hotplug/zones/brightness + real per-key color,
   18 effects, and effect color/speed/brightness/direction/rainbow, all proven on hardware.
 - **M2 — Macros:** recorder/editor + on-device write (needs a macro capture: record/assign one macro).
-- **M3 — LCD:** ✅ **image + animated GIF DONE** (240×135 RGB565, HID output reports on iface 2,
-  per-chunk `0x84` ACK; animation = one header + raw frames + per-frame durations). Proven on
-  hardware via `forge-cli lcd --image <gif|png|jpg>`. Left: an in-app picker, and text /
-  system-monitor "cards" (own captures).
+- **M3 — LCD:** ✅ **image + animated GIF DONE, with in-app UI** (240×135 RGB565, HID output
+  reports on iface 2, per-chunk `0x84` ACK; animation = one header + raw frames + per-frame
+  durations). Proven on hardware via the **Screen tab** (pick file → preview → send) and
+  `forge-cli lcd --image <gif|png|jpg>`. Transport is shared, feature-gated in forge-drivers
+  (`usb`/`imageload`). Left: text / system-monitor "cards" (own captures).
 
 ## Deferred (non-blocking)
 
